@@ -3,18 +3,52 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+
   <title>timeblend demo</title>
+
   <style>
-    body { font-family: system-ui, sans-serif; margin: 16px; background:#111; color:#eee; }
-    video, canvas { width:100%; max-width:480px; background:#000; border-radius:12px; margin-top:12px; }
-    button, select { font-size:16px; padding:10px 14px; margin:6px 4px 6px 0; }
-    a { color:#8cf; display:block; margin-top:12px; }
-    .small { color:#aaa; font-size:14px; }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 16px;
+      background: #111;
+      color: #eee;
+    }
+
+    video, canvas {
+      width: 100%;
+      max-width: 480px;
+      background: #000;
+      border-radius: 12px;
+      margin-top: 12px;
+    }
+
+    button, select {
+      font-size: 16px;
+      padding: 10px 14px;
+      margin: 6px 4px 6px 0;
+    }
+
+    a {
+      color: #8cf;
+      display: block;
+      margin-top: 12px;
+    }
+
+    .small {
+      color: #aaa;
+      font-size: 14px;
+    }
   </style>
 </head>
+
 <body>
   <h1>timeblend demo</h1>
-  <p>Live camera → temporal average → actual timelapse video</p>
+  <p>A timelapse generator that blends time instead of skipping it.</p>
+  <p id="version" class="small"></p>
 
   <label>
     Average window:
@@ -37,13 +71,18 @@
   <video id="camera" autoplay playsinline muted></video>
 
   <h2>Blended preview</h2>
-  <canvas id="output" width="640" height="360"></canvas>
+  <canvas id="output"></canvas>
 
   <h2>Result</h2>
   <video id="result" controls playsinline></video>
   <a id="download" style="display:none;">Download video</a>
 
   <script>
+    const VERSION = "v0.3.0";
+
+    document.getElementById("version").textContent =
+      `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
+
     const video = document.getElementById("camera");
     const canvas = document.getElementById("output");
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -56,17 +95,13 @@
     const resultVideo = document.getElementById("result");
     const downloadLink = document.getElementById("download");
 
-    const width = 640;
-    const height = 360;
-    const sampleIntervalMs = 100; // 10fpsで平均用にサンプリング
-    const outputFps = 30;         // 出力動画fps
+    let width = 640;
+    let height = 360;
 
-    canvas.width = width;
-    canvas.height = height;
+    const sampleIntervalMs = 100; // 10fps sampling
+    const outputFps = 30;
 
     const captureCanvas = document.createElement("canvas");
-    captureCanvas.width = width;
-    captureCanvas.height = height;
     const captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true });
 
     let cameraStream = null;
@@ -79,6 +114,19 @@
 
     function sleep(ms) {
       return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function setupCanvasSize(sourceWidth, sourceHeight) {
+      const isPortrait = sourceHeight > sourceWidth;
+
+      width = isPortrait ? 360 : 640;
+      height = isPortrait ? 640 : 360;
+
+      canvas.width = width;
+      canvas.height = height;
+
+      captureCanvas.width = width;
+      captureCanvas.height = height;
     }
 
     function resetAccumulator() {
@@ -97,10 +145,40 @@
       return new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     }
 
+    function drawVideoCover(targetCtx) {
+      const sourceW = video.videoWidth;
+      const sourceH = video.videoHeight;
+
+      if (!sourceW || !sourceH) return;
+
+      const sourceRatio = sourceW / sourceH;
+      const targetRatio = width / height;
+
+      let drawW;
+      let drawH;
+      let drawX;
+      let drawY;
+
+      if (sourceRatio > targetRatio) {
+        drawH = height;
+        drawW = height * sourceRatio;
+        drawX = (width - drawW) / 2;
+        drawY = 0;
+      } else {
+        drawW = width;
+        drawH = width / sourceRatio;
+        drawX = 0;
+        drawY = (height - drawH) / 2;
+      }
+
+      targetCtx.drawImage(video, drawX, drawY, drawW, drawH);
+    }
+
     function accumulateFrame() {
       if (!video.videoWidth || !video.videoHeight || !sum) return;
 
-      captureCtx.drawImage(video, 0, 0, width, height);
+      drawVideoCover(captureCtx);
+
       const image = captureCtx.getImageData(0, 0, width, height);
       const data = image.data;
 
@@ -127,12 +205,9 @@
       }
 
       ctx.putImageData(output, 0, 0);
-
-      // 重要：録画ではなく、平均フレームを保存する
       averagedFrames.push(output);
 
-      statusText.textContent =
-        `Captured blended frames: ${averagedFrames.length}`;
+      statusText.textContent = `Captured blended frames: ${averagedFrames.length}`;
 
       resetAccumulator();
     }
@@ -140,24 +215,26 @@
     async function start() {
       resultVideo.removeAttribute("src");
       resultVideo.load();
-      downloadLink.style.display = "none";
 
+      downloadLink.style.display = "none";
       averagedFrames = [];
-      resetAccumulator();
 
       statusText.textContent = "Starting camera...";
 
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "environment",
-          width: { ideal: width },
-          height: { ideal: height }
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         },
         audio: false
       });
 
       video.srcObject = cameraStream;
       await video.play();
+
+      setupCanvasSize(video.videoWidth, video.videoHeight);
+      resetAccumulator();
 
       const averageWindowMs = Number(windowSecSelect.value) * 1000;
 
@@ -168,7 +245,8 @@
       stopBtn.disabled = false;
       windowSecSelect.disabled = true;
 
-      statusText.textContent = "Recording source frames...";
+      statusText.textContent =
+        `Recording source frames... output: ${width}x${height}`;
     }
 
     async function stop() {
@@ -178,7 +256,6 @@
       clearInterval(captureTimer);
       clearInterval(emitTimer);
 
-      // 端数分の平均フレームも出す
       emitAverageFrame();
 
       if (cameraStream) {
@@ -218,7 +295,6 @@
 
       recorder.start();
 
-      // 保存した平均フレームを30fpsで短時間に再生して録画する
       for (const frame of averagedFrames) {
         ctx.putImageData(frame, 0, 0);
         await sleep(1000 / outputFps);
@@ -238,6 +314,7 @@
       downloadLink.style.display = "block";
 
       const duration = averagedFrames.length / outputFps;
+
       statusText.textContent =
         `Done. Output: ${averagedFrames.length} frames / ${outputFps}fps ≒ ${duration.toFixed(2)} sec`;
     }
