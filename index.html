@@ -70,7 +70,7 @@
   <h2>Camera</h2>
   <video id="camera" autoplay playsinline muted></video>
 
-  <h2>Blended preview</h2>
+  <h2>Blended output</h2>
   <canvas id="output"></canvas>
 
   <h2>Result</h2>
@@ -78,7 +78,7 @@
   <a id="download" style="display:none;">Download video</a>
 
   <script>
-    const VERSION = "v0.3.0";
+    const VERSION = "v0.4.0-requestFrame";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -98,8 +98,7 @@
     let width = 640;
     let height = 360;
 
-    const sampleIntervalMs = 100; // 10fps sampling
-    const outputFps = 30;
+    const sampleIntervalMs = 100; // 10fps sampling for averaging
 
     const captureCanvas = document.createElement("canvas");
     const captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true });
@@ -110,11 +109,11 @@
 
     let sum = null;
     let frameCount = 0;
-    let averagedFrames = [];
+    let emittedFrameCount = 0;
 
-    function sleep(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
-    }
+    let recorder = null;
+    let chunks = [];
+    let requestFrameTrack = null;
 
     function setupCanvasSize(sourceWidth, sourceHeight) {
       const isPortrait = sourceHeight > sourceWidth;
@@ -205,11 +204,50 @@
       }
 
       ctx.putImageData(output, 0, 0);
-      averagedFrames.push(output);
 
-      statusText.textContent = `Captured blended frames: ${averagedFrames.length}`;
+      emittedFrameCount++;
+
+      // ここが重要：
+      // canvas.captureStream(0) に対して、平均フレーム生成時だけ1フレーム送る
+      if (requestFrameTrack && typeof requestFrameTrack.requestFrame === "function") {
+        requestFrameTrack.requestFrame();
+      }
+
+      statusText.textContent =
+        `Recording... emitted blended frames: ${emittedFrameCount}`;
 
       resetAccumulator();
+    }
+
+    function startRecorder() {
+      chunks = [];
+
+      // 0fps指定で自動キャプチャを止め、requestFrame() した時だけフレームを送る
+      const outputStream = canvas.captureStream(0);
+      requestFrameTrack = outputStream.getVideoTracks()[0];
+
+      recorder = createRecorder(outputStream);
+
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+        const url = URL.createObjectURL(blob);
+
+        resultVideo.src = url;
+
+        downloadLink.href = url;
+        downloadLink.download = "timeblend.webm";
+        downloadLink.textContent = "Download video";
+        downloadLink.style.display = "block";
+
+        statusText.textContent =
+          `Done. Emitted frames: ${emittedFrameCount}. Check actual duration in the video player.`;
+      };
+
+      recorder.start();
     }
 
     async function start() {
@@ -217,7 +255,7 @@
       resultVideo.load();
 
       downloadLink.style.display = "none";
-      averagedFrames = [];
+      emittedFrameCount = 0;
 
       statusText.textContent = "Starting camera...";
 
@@ -236,6 +274,12 @@
       setupCanvasSize(video.videoWidth, video.videoHeight);
       resetAccumulator();
 
+      // 黒画面回避用に初期フレームを一度描画
+      drawVideoCover(captureCtx);
+      ctx.drawImage(captureCanvas, 0, 0, width, height);
+
+      startRecorder();
+
       const averageWindowMs = Number(windowSecSelect.value) * 1000;
 
       captureTimer = setInterval(accumulateFrame, sampleIntervalMs);
@@ -249,7 +293,7 @@
         `Recording source frames... output: ${width}x${height}`;
     }
 
-    async function stop() {
+    function stop() {
       startBtn.disabled = true;
       stopBtn.disabled = true;
 
@@ -264,59 +308,18 @@
 
       video.srcObject = null;
 
-      if (averagedFrames.length === 0) {
-        statusText.textContent = "No frames captured.";
-        startBtn.disabled = false;
-        windowSecSelect.disabled = false;
-        return;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
       }
 
-      statusText.textContent =
-        `Rendering timelapse video... ${averagedFrames.length} frames`;
-
-      await renderTimelapseVideo();
+      if (requestFrameTrack) {
+        requestFrameTrack.stop();
+        requestFrameTrack = null;
+      }
 
       startBtn.disabled = false;
+      stopBtn.disabled = true;
       windowSecSelect.disabled = false;
-    }
-
-    async function renderTimelapseVideo() {
-      const stream = canvas.captureStream(outputFps);
-      const recorder = createRecorder(stream);
-      const chunks = [];
-
-      recorder.ondataavailable = event => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
-
-      const stopped = new Promise(resolve => {
-        recorder.onstop = resolve;
-      });
-
-      recorder.start();
-
-      for (const frame of averagedFrames) {
-        ctx.putImageData(frame, 0, 0);
-        await sleep(1000 / outputFps);
-      }
-
-      recorder.stop();
-      await stopped;
-
-      const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
-      const url = URL.createObjectURL(blob);
-
-      resultVideo.src = url;
-
-      downloadLink.href = url;
-      downloadLink.download = "timeblend.webm";
-      downloadLink.textContent = "Download video";
-      downloadLink.style.display = "block";
-
-      const duration = averagedFrames.length / outputFps;
-
-      statusText.textContent =
-        `Done. Output: ${averagedFrames.length} frames / ${outputFps}fps ≒ ${duration.toFixed(2)} sec`;
     }
 
     startBtn.addEventListener("click", start);
