@@ -80,7 +80,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.6.0-webgl2-webcodecs";
+    const VERSION = "v0.6.1-webgl2-webcodecs-safe-h264";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -188,6 +188,9 @@
       const program = gl.createProgram();
       gl.attachShader(program, vertexShader);
       gl.attachShader(program, fragmentShader);
+
+      gl.bindAttribLocation(program, 0, "a_position");
+
       gl.linkProgram(program);
 
       gl.deleteShader(vertexShader);
@@ -287,9 +290,8 @@
 
       gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
 
-      const location = 0;
-      gl.enableVertexAttribArray(location);
-      gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
       return vao;
     }
@@ -335,7 +337,6 @@
       );
 
       quadVao = setupQuad(gl);
-
       videoTexture = createVideoTexture(gl);
 
       accumTextures = [
@@ -369,49 +370,50 @@
     function updateVideoTexture() {
       gl.bindTexture(gl.TEXTURE_2D, videoTexture);
 
-      try {
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          gl.RGBA,
-          gl.RGBA,
-          gl.UNSIGNED_BYTE,
-          video
-        );
-      } catch (error) {
-        console.error("Video texture upload failed:", error);
-      }
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        video
+      );
     }
 
     function accumulateFrameGpu() {
       if (!isRecording || !video.videoWidth || !video.videoHeight) return;
 
-      updateVideoTexture();
+      try {
+        updateVideoTexture();
 
-      const prevIndex = ping;
-      const nextIndex = 1 - ping;
+        const prevIndex = ping;
+        const nextIndex = 1 - ping;
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[nextIndex]);
-      gl.viewport(0, 0, width, height);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[nextIndex]);
+        gl.viewport(0, 0, width, height);
 
-      gl.useProgram(accumulateProgram);
-      gl.bindVertexArray(quadVao);
+        gl.useProgram(accumulateProgram);
+        gl.bindVertexArray(quadVao);
 
-      const videoLocation = gl.getUniformLocation(accumulateProgram, "u_video");
-      const prevLocation = gl.getUniformLocation(accumulateProgram, "u_prevAccum");
+        const videoLocation = gl.getUniformLocation(accumulateProgram, "u_video");
+        const prevLocation = gl.getUniformLocation(accumulateProgram, "u_prevAccum");
 
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-      gl.uniform1i(videoLocation, 0);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+        gl.uniform1i(videoLocation, 0);
 
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, accumTextures[prevIndex]);
-      gl.uniform1i(prevLocation, 1);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, accumTextures[prevIndex]);
+        gl.uniform1i(prevLocation, 1);
 
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-      ping = nextIndex;
-      sampleCount++;
+        ping = nextIndex;
+        sampleCount++;
+      } catch (error) {
+        console.error(error);
+        statusText.textContent = `GPU accumulate error: ${error.message}`;
+      }
     }
 
     function renderAverageToCanvas() {
@@ -445,23 +447,28 @@
 
       const timestamp = encodedFrameCount * frameDurationUs;
 
-      const frame = new VideoFrame(canvas, {
-        timestamp,
-        duration: frameDurationUs
-      });
+      try {
+        const frame = new VideoFrame(canvas, {
+          timestamp,
+          duration: frameDurationUs
+        });
 
-      encoder.encode(frame, {
-        keyFrame: encodedFrameCount % outputFps === 0
-      });
+        encoder.encode(frame, {
+          keyFrame: encodedFrameCount % outputFps === 0
+        });
 
-      frame.close();
+        frame.close();
 
-      encodedFrameCount++;
+        encodedFrameCount++;
 
-      statusText.textContent =
-        `Encoding... frames: ${encodedFrameCount}, output ≒ ${(encodedFrameCount / outputFps).toFixed(2)} sec`;
+        statusText.textContent =
+          `Encoding... frames: ${encodedFrameCount}, output ≒ ${(encodedFrameCount / outputFps).toFixed(2)} sec`;
 
-      clearAccumulation();
+        clearAccumulation();
+      } catch (error) {
+        console.error(error);
+        statusText.textContent = `Encode error: ${error.message}`;
+      }
     }
 
     async function setupEncoder() {
@@ -469,7 +476,7 @@
         throw new Error("WebCodecs VideoEncoder is not supported in this browser.");
       }
 
-      const codec = "avc1.42E01E";
+      const codec = "avc1.42001f";
 
       const config = {
         codec,
@@ -477,13 +484,15 @@
         height,
         bitrate: width * height >= 1280 * 720 ? 5_000_000 : 2_000_000,
         framerate: outputFps,
+        hardwareAcceleration: "prefer-hardware",
+        latencyMode: "quality",
         avc: { format: "avc" }
       };
 
       const support = await VideoEncoder.isConfigSupported(config);
 
       if (!support.supported) {
-        throw new Error("H.264 WebCodecs encoding is not supported in this browser.");
+        throw new Error("H.264 WebCodecs encoding is not supported with this config.");
       }
 
       muxerTarget = new ArrayBufferTarget();
@@ -581,7 +590,7 @@
 
       if (!encoder || !muxer || encodedFrameCount === 0) {
         statusText.textContent = "No frames encoded.";
-        cleanup();
+        cleanup(false);
         return;
       }
 
