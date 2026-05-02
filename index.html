@@ -9,37 +9,11 @@
   <title>timeblend demo</title>
 
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      margin: 16px;
-      background: #111;
-      color: #eee;
-    }
-
-    video, canvas {
-      width: 100%;
-      max-width: 720px;
-      background: #000;
-      border-radius: 12px;
-      margin-top: 12px;
-    }
-
-    button, select {
-      font-size: 16px;
-      padding: 10px 14px;
-      margin: 6px 4px 6px 0;
-    }
-
-    a {
-      color: #8cf;
-      display: block;
-      margin-top: 12px;
-    }
-
-    .small {
-      color: #aaa;
-      font-size: 14px;
-    }
+    body { font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }
+    video, canvas { width: 100%; max-width: 720px; background: #000; border-radius: 12px; margin-top: 12px; }
+    button, select { font-size: 16px; padding: 10px 14px; margin: 6px 4px 6px 0; }
+    a { color: #8cf; display: block; margin-top: 12px; }
+    .small { color: #aaa; font-size: 14px; }
   </style>
 </head>
 
@@ -80,7 +54,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.6.2-webgl2-webcodecs-flip-fix";
+    const VERSION = "v0.6.3-webgl2-video-flip-only";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -128,11 +102,7 @@
       out vec2 v_uv;
 
       void main() {
-        v_uv = vec2(
-          a_position.x * 0.5 + 0.5,
-          1.0 - (a_position.y * 0.5 + 0.5)
-        );
-
+        v_uv = a_position * 0.5 + 0.5;
         gl_Position = vec4(a_position, 0.0, 1.0);
       }
     `;
@@ -147,7 +117,9 @@
       uniform sampler2D u_prevAccum;
 
       void main() {
-        vec4 current = texture(u_video, v_uv);
+        vec2 videoUv = vec2(v_uv.x, 1.0 - v_uv.y);
+
+        vec4 current = texture(u_video, videoUv);
         vec4 previous = texture(u_prevAccum, v_uv);
 
         outColor = vec4(previous.rgb + current.rgb, 1.0);
@@ -166,7 +138,6 @@
       void main() {
         vec4 accumulated = texture(u_accum, v_uv);
         vec3 averageColor = accumulated.rgb / max(u_count, 1.0);
-
         outColor = vec4(averageColor, 1.0);
       }
     `;
@@ -192,9 +163,7 @@
       const program = gl.createProgram();
       gl.attachShader(program, vertexShader);
       gl.attachShader(program, fragmentShader);
-
       gl.bindAttribLocation(program, 0, "a_position");
-
       gl.linkProgram(program);
 
       gl.deleteShader(vertexShader);
@@ -462,7 +431,6 @@
         });
 
         frame.close();
-
         encodedFrameCount++;
 
         statusText.textContent =
