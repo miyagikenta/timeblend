@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>timeblend demo</title>
+
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 16px;
+      background: #111;
+      color: #eee;
+    }
+
+    video, canvas {
+      width: 100%;
+      max-width: 480px;
+      background: #000;
+      border-radius: 12px;
+      margin-top: 12px;
+    }
+
+    button, select {
+      font-size: 16px;
+      padding: 10px 14px;
+      margin: 6px 4px 6px 0;
+    }
+
+    a {
+      color: #8cf;
+      display: block;
+      margin-top: 12px;
+    }
+
+    .small {
+      color: #aaa;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>timeblend demo</h1>
+  <p>A timelapse generator that blends time instead of skipping it.</p>
+  <p id="version" class="small"></p>
+
+  <label>
+    Average window:
+    <select id="windowSec">
+      <option value="1">1 sec</option>
+      <option value="3" selected>3 sec</option>
+      <option value="5">5 sec</option>
+      <option value="10">10 sec</option>
+    </select>
+  </label>
+
+  <br />
+
+  <button id="startBtn">Start</button>
+  <button id="stopBtn" disabled>Stop</button>
+
+  <p id="status" class="small">Ready</p>
+
+  <h2>Camera</h2>
+  <video id="camera" autoplay playsinline muted></video>
+
+  <h2>Blended output</h2>
+  <canvas id="output"></canvas>
+
+  <h2>Result</h2>
+  <video id="result" controls playsinline></video>
+  <a id="download" style="display:none;">Download MP4</a>
+
+  <script type="module">
+    import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
+
+    const VERSION = "v0.5.0-webcodecs-mp4";
+
+    document.getElementById("version").textContent =
+      `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
+
+    const video = document.getElementById("camera");
+    const canvas = document.getElementById("output");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const windowSecSelect = document.getElementById("windowSec");
+    const statusText = document.getElementById("status");
+
+    const resultVideo = document.getElementById("result");
+    const downloadLink = document.getElementById("download");
+
+    let width = 640;
+    let height = 360;
+
+    const sampleIntervalMs = 100; // 10fps sampling
+    const outputFps = 30;
+    const frameDurationUs = Math.round(1_000_000 / outputFps);
+
+    const captureCanvas = document.createElement("canvas");
+    const captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true });
+
+    let cameraStream = null;
+    let captureTimer = null;
+    let emitTimer = null;
+
+    let sum = null;
+    let frameCount = 0;
+    let encodedFrameCount = 0;
+
+    let encoder = null;
+    let muxer = null;
+    let muxerTarget = null;
+    let isRecording = false;
+
+    function setupCanvasSize(sourceWidth, sourceHeight) {
+      const isPortrait = sourceHeight > sourceWidth;
+
+      width = isPortrait ? 360 : 640;
+      height = isPortrait ? 640 : 360;
+
+      canvas.width = width;
+      canvas.height = height;
+
+      captureCanvas.width = width;
+      captureCanvas.height = height;
+    }
+
+    function resetAccumulator() {
+      sum = new Float32Array(width * height * 4);
+      frameCount = 0;
+    }
+
+    function drawVideoCover(targetCtx) {
+      const sourceW = video.videoWidth;
+      const sourceH = video.videoHeight;
+
+      if (!sourceW || !sourceH) return;
+
+      const sourceRatio = sourceW / sourceH;
+      const targetRatio = width / height;
+
+      let drawW;
+      let drawH;
+      let drawX;
+      let drawY;
+
+      if (sourceRatio > targetRatio) {
+        drawH = height;
+        drawW = height * sourceRatio;
+        drawX = (width - drawW) / 2;
+        drawY = 0;
+      } else {
+        drawW = width;
+        drawH = width / sourceRatio;
+        drawX = 0;
+        drawY = (height - drawH) / 2;
+      }
+
+      targetCtx.drawImage(video, drawX, drawY, drawW, drawH);
+    }
+
+    async function setupEncoder() {
+      if (!("VideoEncoder" in window)) {
+        throw new Error("WebCodecs VideoEncoder is not supported in this browser.");
+      }
+
+      const codec = "avc1.42E01E"; // H.264 Baseline
+      const config = {
+        codec,
+        width,
+        height,
+        bitrate: 2_000_000,
+        framerate: outputFps,
+        avc: { format: "avc" }
+      };
+
+      const support = await VideoEncoder.isConfigSupported(config);
+
+      if (!support.supported) {
+        throw new Error("H.264 WebCodecs encoding is not supported in this browser.");
+      }
+
+      muxerTarget = new ArrayBufferTarget();
+
+      muxer = new Muxer({
+        target: muxerTarget,
+        video: {
+          codec: "avc",
+          width,
+          height,
+          frameRate: outputFps
+        },
+        fastStart: "in-memory"
+      });
+
+      encoder = new VideoEncoder({
+        output: (chunk, meta) => {
+          muxer.addVideoChunk(chunk, meta);
+        },
+        error: (error) => {
+          console.error(error);
+          statusText.textContent = `Encoder error: ${error.message}`;
+        }
+      });
+
+      encoder.configure(config);
+    }
+
+    function accumulateFrame() {
+      if (!video.videoWidth || !video.videoHeight || !sum || !isRecording) return;
+
+      drawVideoCover(captureCtx);
+
+      const image = captureCtx.getImageData(0, 0, width, height);
+      const data = image.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        sum[i] += data[i];
+        sum[i + 1] += data[i + 1];
+        sum[i + 2] += data[i + 2];
+      }
+
+      frameCount++;
+    }
+
+    function emitAverageFrame() {
+      if (!sum || frameCount === 0 || !encoder || !isRecording) return;
+
+      const output = ctx.createImageData(width, height);
+      const data = output.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = sum[i] / frameCount;
+        data[i + 1] = sum[i + 1] / frameCount;
+        data[i + 2] = sum[i + 2] / frameCount;
+        data[i + 3] = 255;
+      }
+
+      ctx.putImageData(output, 0, 0);
+
+      const timestamp = encodedFrameCount * frameDurationUs;
+
+      const frame = new VideoFrame(canvas, {
+        timestamp,
+        duration: frameDurationUs
+      });
+
+      encoder.encode(frame, {
+        keyFrame: encodedFrameCount % outputFps === 0
+      });
+
+      frame.close();
+
+      encodedFrameCount++;
+
+      statusText.textContent =
+        `Encoding... frames: ${encodedFrameCount}, output ≒ ${(encodedFrameCount / outputFps).toFixed(2)} sec`;
+
+      resetAccumulator();
+    }
+
+    async function start() {
+      try {
+        resultVideo.removeAttribute("src");
+        resultVideo.load();
+        downloadLink.style.display = "none";
+
+        encodedFrameCount = 0;
+        isRecording = false;
+
+        statusText.textContent = "Starting camera...";
+
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+
+        video.srcObject = cameraStream;
+        await video.play();
+
+        setupCanvasSize(video.videoWidth, video.videoHeight);
+        resetAccumulator();
+
+        drawVideoCover(captureCtx);
+        ctx.drawImage(captureCanvas, 0, 0, width, height);
+
+        statusText.textContent = "Starting encoder...";
+        await setupEncoder();
+
+        isRecording = true;
+
+        const averageWindowMs = Number(windowSecSelect.value) * 1000;
+
+        captureTimer = setInterval(accumulateFrame, sampleIntervalMs);
+        emitTimer = setInterval(emitAverageFrame, averageWindowMs);
+
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        windowSecSelect.disabled = true;
+
+        statusText.textContent =
+          `Recording... output: ${width}x${height}, ${outputFps}fps`;
+      } catch (error) {
+        console.error(error);
+        statusText.textContent = `Error: ${error.message}`;
+        cleanup();
+      }
+    }
+
+    async function stop() {
+      startBtn.disabled = true;
+      stopBtn.disabled = true;
+
+      clearInterval(captureTimer);
+      clearInterval(emitTimer);
+
+      emitAverageFrame();
+
+      isRecording = false;
+
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+
+      video.srcObject = null;
+
+      if (!encoder || !muxer || encodedFrameCount === 0) {
+        statusText.textContent = "No frames encoded.";
+        cleanup();
+        return;
+      }
+
+      statusText.textContent = "Finalizing MP4...";
+
+      try {
+        await encoder.flush();
+        encoder.close();
+
+        muxer.finalize();
+
+        const blob = new Blob([muxerTarget.buffer], { type: "video/mp4" });
+        const url = URL.createObjectURL(blob);
+
+        resultVideo.src = url;
+
+        downloadLink.href = url;
+        downloadLink.download = "timeblend.mp4";
+        downloadLink.textContent = "Download MP4";
+        downloadLink.style.display = "block";
+
+        statusText.textContent =
+          `Done. Output: ${encodedFrameCount} frames / ${outputFps}fps ≒ ${(encodedFrameCount / outputFps).toFixed(2)} sec`;
+      } catch (error) {
+        console.error(error);
+        statusText.textContent = `Finalize error: ${error.message}`;
+      } finally {
+        cleanup(false);
+      }
+    }
+
+    function cleanup(resetStatus = true) {
+      clearInterval(captureTimer);
+      clearInterval(emitTimer);
+
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+
+      cameraStream = null;
+      video.srcObject = null;
+
+      encoder = null;
+      muxer = null;
+      muxerTarget = null;
+      isRecording = false;
+
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      windowSecSelect.disabled = false;
+
+      if (resetStatus) {
+        statusText.textContent = "Ready";
+      }
+    }
+
+    startBtn.addEventListener("click", start);
+    stopBtn.addEventListener("click", stop);
+  </script>
+</body>
+</html>

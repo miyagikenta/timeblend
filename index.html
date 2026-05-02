@@ -18,7 +18,7 @@
 
     video, canvas {
       width: 100%;
-      max-width: 480px;
+      max-width: 720px;
       background: #000;
       border-radius: 12px;
       margin-top: 12px;
@@ -45,7 +45,7 @@
 
 <body>
   <h1>timeblend demo</h1>
-  <p>A timelapse generator that blends time instead of skipping it.</p>
+  <p>GPU temporal averaging timelapse prototype.</p>
   <p id="version" class="small"></p>
 
   <label>
@@ -55,6 +55,8 @@
       <option value="3" selected>3 sec</option>
       <option value="5">5 sec</option>
       <option value="10">10 sec</option>
+      <option value="30">30 sec</option>
+      <option value="60">60 sec</option>
     </select>
   </label>
 
@@ -78,39 +80,38 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.5.0-webcodecs-mp4";
+    const VERSION = "v0.6.0-webgl2-webcodecs";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
 
     const video = document.getElementById("camera");
     const canvas = document.getElementById("output");
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const windowSecSelect = document.getElementById("windowSec");
     const statusText = document.getElementById("status");
-
     const resultVideo = document.getElementById("result");
     const downloadLink = document.getElementById("download");
 
-    let width = 640;
-    let height = 360;
+    let gl = null;
 
-    const sampleIntervalMs = 100; // 10fps sampling
+    let width = 1280;
+    let height = 720;
+
+    const sampleIntervalMs = 100;
     const outputFps = 30;
     const frameDurationUs = Math.round(1_000_000 / outputFps);
 
-    const captureCanvas = document.createElement("canvas");
-    const captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true });
-
     let cameraStream = null;
-    let captureTimer = null;
+    let sampleTimer = null;
     let emitTimer = null;
 
-    let sum = null;
-    let frameCount = 0;
+    let videoTexture = null;
+    let accumTextures = [];
+    let framebuffers = [];
+    let ping = 0;
+    let sampleCount = 0;
     let encodedFrameCount = 0;
 
     let encoder = null;
@@ -118,51 +119,349 @@
     let muxerTarget = null;
     let isRecording = false;
 
+    let accumulateProgram = null;
+    let displayProgram = null;
+    let quadVao = null;
+
+    const vertexShaderSource = `#version 300 es
+      in vec2 a_position;
+      out vec2 v_uv;
+
+      void main() {
+        v_uv = a_position * 0.5 + 0.5;
+        gl_Position = vec4(a_position, 0.0, 1.0);
+      }
+    `;
+
+    const accumulateFragmentShaderSource = `#version 300 es
+      precision highp float;
+
+      in vec2 v_uv;
+      out vec4 outColor;
+
+      uniform sampler2D u_video;
+      uniform sampler2D u_prevAccum;
+
+      void main() {
+        vec4 current = texture(u_video, v_uv);
+        vec4 previous = texture(u_prevAccum, v_uv);
+
+        outColor = vec4(previous.rgb + current.rgb, 1.0);
+      }
+    `;
+
+    const displayFragmentShaderSource = `#version 300 es
+      precision highp float;
+
+      in vec2 v_uv;
+      out vec4 outColor;
+
+      uniform sampler2D u_accum;
+      uniform float u_count;
+
+      void main() {
+        vec4 accumulated = texture(u_accum, v_uv);
+        vec3 averageColor = accumulated.rgb / max(u_count, 1.0);
+
+        outColor = vec4(averageColor, 1.0);
+      }
+    `;
+
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const info = gl.getShaderInfoLog(shader);
+        gl.deleteShader(shader);
+        throw new Error(`Shader compile error: ${info}`);
+      }
+
+      return shader;
+    }
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+      const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+      const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program);
+        gl.deleteProgram(program);
+        throw new Error(`Program link error: ${info}`);
+      }
+
+      return program;
+    }
+
+    function createFloatTexture(gl, width, height) {
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA32F,
+        width,
+        height,
+        0,
+        gl.RGBA,
+        gl.FLOAT,
+        null
+      );
+
+      return texture;
+    }
+
+    function createFramebuffer(gl, texture) {
+      const framebuffer = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        texture,
+        0
+      );
+
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) {
+        throw new Error(`Framebuffer incomplete: ${status}`);
+      }
+
+      return framebuffer;
+    }
+
+    function createVideoTexture(gl) {
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        1,
+        1,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        new Uint8Array([0, 0, 0, 255])
+      );
+
+      return texture;
+    }
+
+    function setupQuad(gl) {
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+      const vertices = new Float32Array([
+        -1, -1,
+         1, -1,
+        -1,  1,
+        -1,  1,
+         1, -1,
+         1,  1
+      ]);
+
+      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+      const location = 0;
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
+
+      return vao;
+    }
+
     function setupCanvasSize(sourceWidth, sourceHeight) {
       const isPortrait = sourceHeight > sourceWidth;
 
-      width = isPortrait ? 360 : 640;
-      height = isPortrait ? 640 : 360;
+      width = isPortrait ? 720 : 1280;
+      height = isPortrait ? 1280 : 720;
 
       canvas.width = width;
       canvas.height = height;
-
-      captureCanvas.width = width;
-      captureCanvas.height = height;
     }
 
-    function resetAccumulator() {
-      sum = new Float32Array(width * height * 4);
-      frameCount = 0;
-    }
+    function setupWebGL() {
+      gl = canvas.getContext("webgl2", {
+        alpha: false,
+        antialias: false,
+        preserveDrawingBuffer: true
+      });
 
-    function drawVideoCover(targetCtx) {
-      const sourceW = video.videoWidth;
-      const sourceH = video.videoHeight;
-
-      if (!sourceW || !sourceH) return;
-
-      const sourceRatio = sourceW / sourceH;
-      const targetRatio = width / height;
-
-      let drawW;
-      let drawH;
-      let drawX;
-      let drawY;
-
-      if (sourceRatio > targetRatio) {
-        drawH = height;
-        drawW = height * sourceRatio;
-        drawX = (width - drawW) / 2;
-        drawY = 0;
-      } else {
-        drawW = width;
-        drawH = width / sourceRatio;
-        drawX = 0;
-        drawY = (height - drawH) / 2;
+      if (!gl) {
+        throw new Error("WebGL2 is not supported in this browser.");
       }
 
-      targetCtx.drawImage(video, drawX, drawY, drawW, drawH);
+      const colorBufferFloat = gl.getExtension("EXT_color_buffer_float");
+      if (!colorBufferFloat) {
+        throw new Error("EXT_color_buffer_float is not supported. Float accumulation cannot run.");
+      }
+
+      gl.viewport(0, 0, width, height);
+
+      accumulateProgram = createProgram(
+        gl,
+        vertexShaderSource,
+        accumulateFragmentShaderSource
+      );
+
+      displayProgram = createProgram(
+        gl,
+        vertexShaderSource,
+        displayFragmentShaderSource
+      );
+
+      quadVao = setupQuad(gl);
+
+      videoTexture = createVideoTexture(gl);
+
+      accumTextures = [
+        createFloatTexture(gl, width, height),
+        createFloatTexture(gl, width, height)
+      ];
+
+      framebuffers = [
+        createFramebuffer(gl, accumTextures[0]),
+        createFramebuffer(gl, accumTextures[1])
+      ];
+
+      clearAccumulation();
+    }
+
+    function clearAccumulation() {
+      if (!gl) return;
+
+      for (const framebuffer of framebuffers) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.viewport(0, 0, width, height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      sampleCount = 0;
+      ping = 0;
+    }
+
+    function updateVideoTexture() {
+      gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+
+      try {
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          video
+        );
+      } catch (error) {
+        console.error("Video texture upload failed:", error);
+      }
+    }
+
+    function accumulateFrameGpu() {
+      if (!isRecording || !video.videoWidth || !video.videoHeight) return;
+
+      updateVideoTexture();
+
+      const prevIndex = ping;
+      const nextIndex = 1 - ping;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[nextIndex]);
+      gl.viewport(0, 0, width, height);
+
+      gl.useProgram(accumulateProgram);
+      gl.bindVertexArray(quadVao);
+
+      const videoLocation = gl.getUniformLocation(accumulateProgram, "u_video");
+      const prevLocation = gl.getUniformLocation(accumulateProgram, "u_prevAccum");
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+      gl.uniform1i(videoLocation, 0);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, accumTextures[prevIndex]);
+      gl.uniform1i(prevLocation, 1);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      ping = nextIndex;
+      sampleCount++;
+    }
+
+    function renderAverageToCanvas() {
+      if (sampleCount === 0) return false;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, width, height);
+
+      gl.useProgram(displayProgram);
+      gl.bindVertexArray(quadVao);
+
+      const accumLocation = gl.getUniformLocation(displayProgram, "u_accum");
+      const countLocation = gl.getUniformLocation(displayProgram, "u_count");
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, accumTextures[ping]);
+      gl.uniform1i(accumLocation, 0);
+      gl.uniform1f(countLocation, sampleCount);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.finish();
+
+      return true;
+    }
+
+    function emitAverageFrame() {
+      if (!isRecording || !encoder || sampleCount === 0) return;
+
+      const rendered = renderAverageToCanvas();
+      if (!rendered) return;
+
+      const timestamp = encodedFrameCount * frameDurationUs;
+
+      const frame = new VideoFrame(canvas, {
+        timestamp,
+        duration: frameDurationUs
+      });
+
+      encoder.encode(frame, {
+        keyFrame: encodedFrameCount % outputFps === 0
+      });
+
+      frame.close();
+
+      encodedFrameCount++;
+
+      statusText.textContent =
+        `Encoding... frames: ${encodedFrameCount}, output ≒ ${(encodedFrameCount / outputFps).toFixed(2)} sec`;
+
+      clearAccumulation();
     }
 
     async function setupEncoder() {
@@ -170,12 +469,13 @@
         throw new Error("WebCodecs VideoEncoder is not supported in this browser.");
       }
 
-      const codec = "avc1.42E01E"; // H.264 Baseline
+      const codec = "avc1.42E01E";
+
       const config = {
         codec,
         width,
         height,
-        bitrate: 2_000_000,
+        bitrate: width * height >= 1280 * 720 ? 5_000_000 : 2_000_000,
         framerate: outputFps,
         avc: { format: "avc" }
       };
@@ -212,59 +512,6 @@
       encoder.configure(config);
     }
 
-    function accumulateFrame() {
-      if (!video.videoWidth || !video.videoHeight || !sum || !isRecording) return;
-
-      drawVideoCover(captureCtx);
-
-      const image = captureCtx.getImageData(0, 0, width, height);
-      const data = image.data;
-
-      for (let i = 0; i < data.length; i += 4) {
-        sum[i] += data[i];
-        sum[i + 1] += data[i + 1];
-        sum[i + 2] += data[i + 2];
-      }
-
-      frameCount++;
-    }
-
-    function emitAverageFrame() {
-      if (!sum || frameCount === 0 || !encoder || !isRecording) return;
-
-      const output = ctx.createImageData(width, height);
-      const data = output.data;
-
-      for (let i = 0; i < data.length; i += 4) {
-        data[i] = sum[i] / frameCount;
-        data[i + 1] = sum[i + 1] / frameCount;
-        data[i + 2] = sum[i + 2] / frameCount;
-        data[i + 3] = 255;
-      }
-
-      ctx.putImageData(output, 0, 0);
-
-      const timestamp = encodedFrameCount * frameDurationUs;
-
-      const frame = new VideoFrame(canvas, {
-        timestamp,
-        duration: frameDurationUs
-      });
-
-      encoder.encode(frame, {
-        keyFrame: encodedFrameCount % outputFps === 0
-      });
-
-      frame.close();
-
-      encodedFrameCount++;
-
-      statusText.textContent =
-        `Encoding... frames: ${encodedFrameCount}, output ≒ ${(encodedFrameCount / outputFps).toFixed(2)} sec`;
-
-      resetAccumulator();
-    }
-
     async function start() {
       try {
         resultVideo.removeAttribute("src");
@@ -279,8 +526,9 @@
         cameraStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30, max: 30 }
           },
           audio: false
         });
@@ -289,10 +537,7 @@
         await video.play();
 
         setupCanvasSize(video.videoWidth, video.videoHeight);
-        resetAccumulator();
-
-        drawVideoCover(captureCtx);
-        ctx.drawImage(captureCanvas, 0, 0, width, height);
+        setupWebGL();
 
         statusText.textContent = "Starting encoder...";
         await setupEncoder();
@@ -301,7 +546,7 @@
 
         const averageWindowMs = Number(windowSecSelect.value) * 1000;
 
-        captureTimer = setInterval(accumulateFrame, sampleIntervalMs);
+        sampleTimer = setInterval(accumulateFrameGpu, sampleIntervalMs);
         emitTimer = setInterval(emitAverageFrame, averageWindowMs);
 
         startBtn.disabled = true;
@@ -309,7 +554,7 @@
         windowSecSelect.disabled = true;
 
         statusText.textContent =
-          `Recording... output: ${width}x${height}, ${outputFps}fps`;
+          `Recording GPU frames... output: ${width}x${height}`;
       } catch (error) {
         console.error(error);
         statusText.textContent = `Error: ${error.message}`;
@@ -321,7 +566,7 @@
       startBtn.disabled = true;
       stopBtn.disabled = true;
 
-      clearInterval(captureTimer);
+      clearInterval(sampleTimer);
       clearInterval(emitTimer);
 
       emitAverageFrame();
@@ -369,7 +614,7 @@
     }
 
     function cleanup(resetStatus = true) {
-      clearInterval(captureTimer);
+      clearInterval(sampleTimer);
       clearInterval(emitTimer);
 
       if (cameraStream) {
