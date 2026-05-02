@@ -5,35 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>timeblend demo</title>
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      margin: 16px;
-      background: #111;
-      color: #eee;
-    }
-    video, canvas {
-      width: 100%;
-      max-width: 480px;
-      background: #000;
-      border-radius: 12px;
-      margin-top: 12px;
-    }
-    button, select {
-      font-size: 16px;
-      padding: 10px 14px;
-      margin: 6px 4px 6px 0;
-    }
-    a {
-      color: #8cf;
-      display: block;
-      margin-top: 12px;
-    }
+    body { font-family: system-ui, sans-serif; margin: 16px; background:#111; color:#eee; }
+    video, canvas { width:100%; max-width:480px; background:#000; border-radius:12px; margin-top:12px; }
+    button, select { font-size:16px; padding:10px 14px; margin:6px 4px 6px 0; }
+    a { color:#8cf; display:block; margin-top:12px; }
+    .small { color:#aaa; font-size:14px; }
   </style>
 </head>
 <body>
   <h1>timeblend demo</h1>
-
-  <p>Live camera → temporal average → timelapse video</p>
+  <p>Live camera → temporal average → actual timelapse video</p>
 
   <label>
     Average window:
@@ -50,10 +31,12 @@
   <button id="startBtn">Start</button>
   <button id="stopBtn" disabled>Stop</button>
 
+  <p id="status" class="small">Ready</p>
+
   <h2>Camera</h2>
   <video id="camera" autoplay playsinline muted></video>
 
-  <h2>Blended output</h2>
+  <h2>Blended preview</h2>
   <canvas id="output" width="640" height="360"></canvas>
 
   <h2>Result</h2>
@@ -68,29 +51,40 @@
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const windowSecSelect = document.getElementById("windowSec");
+    const statusText = document.getElementById("status");
 
     const resultVideo = document.getElementById("result");
     const downloadLink = document.getElementById("download");
 
-    let cameraStream = null;
-    let recorder = null;
-    let chunks = [];
-
-    let captureCanvas = document.createElement("canvas");
-    let captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true });
-
-    let sum = null;
-    let frameCount = 0;
-    let captureTimer = null;
-    let emitTimer = null;
-
     const width = 640;
     const height = 360;
+    const sampleIntervalMs = 100; // 10fpsで平均用にサンプリング
+    const outputFps = 30;         // 出力動画fps
 
     canvas.width = width;
     canvas.height = height;
+
+    const captureCanvas = document.createElement("canvas");
     captureCanvas.width = width;
     captureCanvas.height = height;
+    const captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true });
+
+    let cameraStream = null;
+    let captureTimer = null;
+    let emitTimer = null;
+
+    let sum = null;
+    let frameCount = 0;
+    let averagedFrames = [];
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function resetAccumulator() {
+      sum = new Float32Array(width * height * 4);
+      frameCount = 0;
+    }
 
     function createRecorder(stream) {
       const candidates = [
@@ -100,17 +94,11 @@
       ];
 
       const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type)) || "";
-
       return new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     }
 
-    function resetAccumulator() {
-      sum = new Float32Array(width * height * 4);
-      frameCount = 0;
-    }
-
     function accumulateFrame() {
-      if (!video.videoWidth || !video.videoHeight) return;
+      if (!video.videoWidth || !video.videoHeight || !sum) return;
 
       captureCtx.drawImage(video, 0, 0, width, height);
       const image = captureCtx.getImageData(0, 0, width, height);
@@ -120,14 +108,13 @@
         sum[i] += data[i];
         sum[i + 1] += data[i + 1];
         sum[i + 2] += data[i + 2];
-        sum[i + 3] = 255;
       }
 
       frameCount++;
     }
 
     function emitAverageFrame() {
-      if (frameCount === 0) return;
+      if (!sum || frameCount === 0) return;
 
       const output = ctx.createImageData(width, height);
       const data = output.data;
@@ -140,14 +127,25 @@
       }
 
       ctx.putImageData(output, 0, 0);
+
+      // 重要：録画ではなく、平均フレームを保存する
+      averagedFrames.push(output);
+
+      statusText.textContent =
+        `Captured blended frames: ${averagedFrames.length}`;
+
       resetAccumulator();
     }
 
     async function start() {
-      downloadLink.style.display = "none";
       resultVideo.removeAttribute("src");
-      chunks = [];
+      resultVideo.load();
+      downloadLink.style.display = "none";
+
+      averagedFrames = [];
       resetAccumulator();
+
+      statusText.textContent = "Starting camera...";
 
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -161,57 +159,87 @@
       video.srcObject = cameraStream;
       await video.play();
 
-      const outputStream = canvas.captureStream(30);
-      recorder = createRecorder(outputStream);
-
-      recorder.ondataavailable = event => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
-
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
-        const url = URL.createObjectURL(blob);
-
-        resultVideo.src = url;
-
-        downloadLink.href = url;
-        downloadLink.download = "timeblend.webm";
-        downloadLink.textContent = "Download video";
-        downloadLink.style.display = "block";
-      };
-
-      recorder.start();
-
       const averageWindowMs = Number(windowSecSelect.value) * 1000;
 
-      // 入力カメラから毎秒10フレームだけサンプリングして平均
-      captureTimer = setInterval(accumulateFrame, 100);
-
-      // 指定秒数ごとに平均フレームを1枚出力
+      captureTimer = setInterval(accumulateFrame, sampleIntervalMs);
       emitTimer = setInterval(emitAverageFrame, averageWindowMs);
 
       startBtn.disabled = true;
       stopBtn.disabled = false;
       windowSecSelect.disabled = true;
+
+      statusText.textContent = "Recording source frames...";
     }
 
-    function stop() {
+    async function stop() {
+      startBtn.disabled = true;
+      stopBtn.disabled = true;
+
       clearInterval(captureTimer);
       clearInterval(emitTimer);
 
+      // 端数分の平均フレームも出す
       emitAverageFrame();
-
-      if (recorder && recorder.state !== "inactive") {
-        recorder.stop();
-      }
 
       if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
       }
 
+      video.srcObject = null;
+
+      if (averagedFrames.length === 0) {
+        statusText.textContent = "No frames captured.";
+        startBtn.disabled = false;
+        windowSecSelect.disabled = false;
+        return;
+      }
+
+      statusText.textContent =
+        `Rendering timelapse video... ${averagedFrames.length} frames`;
+
+      await renderTimelapseVideo();
+
       startBtn.disabled = false;
-      stopBtn.disabled = true;
       windowSecSelect.disabled = false;
+    }
+
+    async function renderTimelapseVideo() {
+      const stream = canvas.captureStream(outputFps);
+      const recorder = createRecorder(stream);
+      const chunks = [];
+
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+
+      const stopped = new Promise(resolve => {
+        recorder.onstop = resolve;
+      });
+
+      recorder.start();
+
+      // 保存した平均フレームを30fpsで短時間に再生して録画する
+      for (const frame of averagedFrames) {
+        ctx.putImageData(frame, 0, 0);
+        await sleep(1000 / outputFps);
+      }
+
+      recorder.stop();
+      await stopped;
+
+      const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+      const url = URL.createObjectURL(blob);
+
+      resultVideo.src = url;
+
+      downloadLink.href = url;
+      downloadLink.download = "timeblend.webm";
+      downloadLink.textContent = "Download video";
+      downloadLink.style.display = "block";
+
+      const duration = averagedFrames.length / outputFps;
+      statusText.textContent =
+        `Done. Output: ${averagedFrames.length} frames / ${outputFps}fps ≒ ${duration.toFixed(2)} sec`;
     }
 
     startBtn.addEventListener("click", start);
