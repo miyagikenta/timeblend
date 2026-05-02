@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>timeblend demo</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 16px;
+      background: #111;
+      color: #eee;
+    }
+    video, canvas {
+      width: 100%;
+      max-width: 480px;
+      background: #000;
+      border-radius: 12px;
+      margin-top: 12px;
+    }
+    button, select {
+      font-size: 16px;
+      padding: 10px 14px;
+      margin: 6px 4px 6px 0;
+    }
+    a {
+      color: #8cf;
+      display: block;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>timeblend demo</h1>
+
+  <p>Live camera → temporal average → timelapse video</p>
+
+  <label>
+    Average window:
+    <select id="windowSec">
+      <option value="1">1 sec</option>
+      <option value="3" selected>3 sec</option>
+      <option value="5">5 sec</option>
+      <option value="10">10 sec</option>
+    </select>
+  </label>
+
+  <br />
+
+  <button id="startBtn">Start</button>
+  <button id="stopBtn" disabled>Stop</button>
+
+  <h2>Camera</h2>
+  <video id="camera" autoplay playsinline muted></video>
+
+  <h2>Blended output</h2>
+  <canvas id="output" width="640" height="360"></canvas>
+
+  <h2>Result</h2>
+  <video id="result" controls playsinline></video>
+  <a id="download" style="display:none;">Download video</a>
+
+  <script>
+    const video = document.getElementById("camera");
+    const canvas = document.getElementById("output");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const windowSecSelect = document.getElementById("windowSec");
+
+    const resultVideo = document.getElementById("result");
+    const downloadLink = document.getElementById("download");
+
+    let cameraStream = null;
+    let recorder = null;
+    let chunks = [];
+
+    let captureCanvas = document.createElement("canvas");
+    let captureCtx = captureCanvas.getContext("2d", { willReadFrequently: true });
+
+    let sum = null;
+    let frameCount = 0;
+    let captureTimer = null;
+    let emitTimer = null;
+
+    const width = 640;
+    const height = 360;
+
+    canvas.width = width;
+    canvas.height = height;
+    captureCanvas.width = width;
+    captureCanvas.height = height;
+
+    function createRecorder(stream) {
+      const candidates = [
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm"
+      ];
+
+      const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type)) || "";
+
+      return new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    }
+
+    function resetAccumulator() {
+      sum = new Float32Array(width * height * 4);
+      frameCount = 0;
+    }
+
+    function accumulateFrame() {
+      if (!video.videoWidth || !video.videoHeight) return;
+
+      captureCtx.drawImage(video, 0, 0, width, height);
+      const image = captureCtx.getImageData(0, 0, width, height);
+      const data = image.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        sum[i] += data[i];
+        sum[i + 1] += data[i + 1];
+        sum[i + 2] += data[i + 2];
+        sum[i + 3] = 255;
+      }
+
+      frameCount++;
+    }
+
+    function emitAverageFrame() {
+      if (frameCount === 0) return;
+
+      const output = ctx.createImageData(width, height);
+      const data = output.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = sum[i] / frameCount;
+        data[i + 1] = sum[i + 1] / frameCount;
+        data[i + 2] = sum[i + 2] / frameCount;
+        data[i + 3] = 255;
+      }
+
+      ctx.putImageData(output, 0, 0);
+      resetAccumulator();
+    }
+
+    async function start() {
+      downloadLink.style.display = "none";
+      resultVideo.removeAttribute("src");
+      chunks = [];
+      resetAccumulator();
+
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment",
+          width: { ideal: width },
+          height: { ideal: height }
+        },
+        audio: false
+      });
+
+      video.srcObject = cameraStream;
+      await video.play();
+
+      const outputStream = canvas.captureStream(30);
+      recorder = createRecorder(outputStream);
+
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+        const url = URL.createObjectURL(blob);
+
+        resultVideo.src = url;
+
+        downloadLink.href = url;
+        downloadLink.download = "timeblend.webm";
+        downloadLink.textContent = "Download video";
+        downloadLink.style.display = "block";
+      };
+
+      recorder.start();
+
+      const averageWindowMs = Number(windowSecSelect.value) * 1000;
+
+      // 入力カメラから毎秒10フレームだけサンプリングして平均
+      captureTimer = setInterval(accumulateFrame, 100);
+
+      // 指定秒数ごとに平均フレームを1枚出力
+      emitTimer = setInterval(emitAverageFrame, averageWindowMs);
+
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      windowSecSelect.disabled = true;
+    }
+
+    function stop() {
+      clearInterval(captureTimer);
+      clearInterval(emitTimer);
+
+      emitAverageFrame();
+
+      if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+      }
+
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      windowSecSelect.disabled = false;
+    }
+
+    startBtn.addEventListener("click", start);
+    stopBtn.addEventListener("click", stop);
+  </script>
+</body>
+</html>
