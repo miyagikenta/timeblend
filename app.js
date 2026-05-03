@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.8.0-resolution-first";
+const VERSION = "v0.8.1-consent-modal";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -12,7 +12,11 @@ const stopBtn = document.getElementById("stopBtn");
 const windowSecSelect = document.getElementById("windowSec");
 const outputPresetSelect = document.getElementById("outputPreset");
 const facingModeSelect = document.getElementById("facingMode");
-const consentCheckbox = document.getElementById("consentConfirm");
+const consentModal = document.getElementById("consentModal");
+const consentModalCheck = document.getElementById("consentModalCheck");
+const consentAcceptBtn = document.getElementById("consentAcceptBtn");
+const consentCloseBtn = document.getElementById("consentCloseBtn");
+const consentHeaderCloseBtn = document.getElementById("consentHeaderCloseBtn");
 const statusText = document.getElementById("status");
 const resultVideo = document.getElementById("result");
 const downloadLink = document.getElementById("download");
@@ -419,6 +423,28 @@ function updateStartButtonAvailability() {
   startBtn.disabled = isRecording || !hasConsent;
 }
 
+function updateConsentModalControls() {
+  if (!consentAcceptBtn || !consentModalCheck) return;
+  consentAcceptBtn.disabled = !consentModalCheck.checked;
+}
+
+function openConsentModal() {
+  if (!consentModal || hasConsent) return;
+  if (typeof consentModal.showModal === "function" && !consentModal.open) {
+    consentModal.showModal();
+  }
+}
+
+function closeConsentModal() {
+  if (!consentModal || !consentModal.open) return;
+  consentModal.close();
+}
+
+function showConsentRequiredStatus() {
+  statusText.textContent =
+    "利用前にプライバシーポリシー / 利用規約を確認し、同意チェックを入れてください。";
+}
+
 function stopSampleLoop() {
   if (sampleRvfHandle !== null && typeof video.cancelVideoFrameCallback === "function") {
     video.cancelVideoFrameCallback(sampleRvfHandle);
@@ -713,8 +739,8 @@ async function setupEncoder() {
 
 async function start() {
   if (!hasConsent) {
-    statusText.textContent =
-      "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
+    showConsentRequiredStatus();
+    openConsentModal();
     return;
   }
 
@@ -863,28 +889,55 @@ function cleanup(resetStatus = true) {
   if (resetStatus) {
     statusText.textContent = hasConsent
       ? "Ready"
-      : "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
+      : "利用前にプライバシーポリシー / 利用規約を確認し、同意チェックを入れてください。";
   }
 }
 
 hasConsent = loadConsentState();
-if (consentCheckbox) {
-  consentCheckbox.checked = hasConsent;
-  consentCheckbox.addEventListener("change", () => {
-    hasConsent = consentCheckbox.checked;
-    saveConsentState(hasConsent);
+if (consentModalCheck) {
+  consentModalCheck.checked = hasConsent;
+  consentModalCheck.addEventListener("change", updateConsentModalControls);
+}
+if (consentAcceptBtn) {
+  consentAcceptBtn.addEventListener("click", () => {
+    if (!consentModalCheck?.checked) return;
+    hasConsent = true;
+    saveConsentState(true);
     updateStartButtonAvailability();
+    closeConsentModal();
     if (!isRecording) {
-      statusText.textContent = hasConsent
-        ? "Ready"
-        : "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
+      statusText.textContent = "Ready";
+    }
+  });
+}
+if (consentCloseBtn) {
+  consentCloseBtn.addEventListener("click", () => {
+    closeConsentModal();
+    if (!isRecording && !hasConsent) {
+      showConsentRequiredStatus();
+    }
+  });
+}
+if (consentHeaderCloseBtn) {
+  consentHeaderCloseBtn.addEventListener("click", () => {
+    closeConsentModal();
+    if (!isRecording && !hasConsent) {
+      showConsentRequiredStatus();
+    }
+  });
+}
+if (consentModal) {
+  consentModal.addEventListener("close", () => {
+    if (!isRecording && !hasConsent) {
+      showConsentRequiredStatus();
     }
   });
 }
 updateStartButtonAvailability();
 if (!hasConsent) {
-  statusText.textContent =
-    "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
+  updateConsentModalControls();
+  showConsentRequiredStatus();
+  openConsentModal();
 }
 
 startBtn.addEventListener("click", start);

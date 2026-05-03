@@ -122,7 +122,7 @@ python3 -m http.server 8080
 - MP4 ダウンロード・結果 `<video>` 再生
 - 録画中は平均窓・解像度セレクト無効化
 - 解像度制約に失敗した場合は **Camera facing へ自動フォールバックしない**。`Output resolution` の変更（必要なら `Camera facing` 変更）を促して再試行させる
-- 初回利用時は **Privacy Policy / Terms of Use の確認チェック**が必須。`localStorage` の `timeblend.consent.v1` に同意状態を保存する
+- 初回利用時は **同意モーダル**で Privacy / Terms の確認と同意が必須。`localStorage` の `timeblend.consent.v1` に同意状態を保存する
 - **サンプリング**: `requestVideoFrameCallback` 優先、未対応は `setInterval`（100ms）
 - **WebGL**: uniform のキャッシュ、`cleanup` から `teardownWebGL` でリソース解放（`gl.finish` は削除済み）
 - **音声なし**: 録画・MP4 は **映像トラックのみ**（`getUserMedia` で `audio: false`）。

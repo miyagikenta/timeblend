@@ -59,16 +59,6 @@
           </label>
         </div>
         <small>縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート PC など背面カメラが無い場合は、Start 時に前面へ切り替わります。</small>
-        <small>
-          Start 前に、
-          <a href="./privacy.html">Privacy Policy</a> と
-          <a href="./terms.html">Terms of Use</a>
-          を確認してください。
-        </small>
-        <label for="consentConfirm">
-          <input type="checkbox" id="consentConfirm" />
-          内容を確認し、同意します
-        </label>
         <div class="grid" aria-label="Recording actions">
           <button type="button" id="startBtn" disabled>Start</button>
           <button type="button" id="stopBtn" class="secondary" disabled>Stop</button>
@@ -109,11 +99,33 @@
 
     <footer>
       <small>
-        <a href="./privacy.html">Privacy Policy</a> |
-        <a href="./terms.html">Terms of Use</a>
+        <a href="./privacy.html">プライバシーポリシー</a> |
+        <a href="./terms.html">利用規約</a>
       </small>
     </footer>
   </main>
+
+  <dialog id="consentModal">
+    <article>
+      <header>
+        <button type="button" id="consentHeaderCloseBtn" aria-label="Close" rel="prev"></button>
+        <h2>利用前の確認</h2>
+      </header>
+      <p>利用前に、プライバシーポリシーと利用規約を確認してください。</p>
+      <p>
+        <a href="./privacy.html" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a> |
+        <a href="./terms.html" target="_blank" rel="noopener noreferrer">利用規約</a>
+      </p>
+      <label for="consentModalCheck">
+        <input type="checkbox" id="consentModalCheck" />
+        内容を確認し、同意します
+      </label>
+      <footer>
+        <button type="button" id="consentCloseBtn" class="secondary">閉じる</button>
+        <button type="button" id="consentAcceptBtn" disabled>同意して続行</button>
+      </footer>
+    </article>
+  </dialog>
 
   <script type="module" src="app.js"></script>
 </body>
