@@ -36,17 +36,6 @@
 
   <br />
 
-  <label>
-    Output resolution:
-    <select id="resolution">
-      <option value="720">720p</option>
-      <option value="1080" selected>1080p</option>
-      <option value="2160">4K</option>
-    </select>
-  </label>
-
-  <p class="small">4K may be slow or fail on some devices.</p>
-
   <button id="startBtn">Start</button>
   <button id="stopBtn" disabled>Stop</button>
 
@@ -65,7 +54,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.7.0-resolution-select";
+    const VERSION = "v0.6.3-webgl2-video-flip-only";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -75,15 +64,14 @@
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const windowSecSelect = document.getElementById("windowSec");
-    const resolutionSelect = document.getElementById("resolution");
     const statusText = document.getElementById("status");
     const resultVideo = document.getElementById("result");
     const downloadLink = document.getElementById("download");
 
     let gl = null;
 
-    let width = 1920;
-    let height = 1080;
+    let width = 1280;
+    let height = 720;
 
     const sampleIntervalMs = 100;
     const outputFps = 30;
@@ -153,34 +141,6 @@
         outColor = vec4(averageColor, 1.0);
       }
     `;
-
-    function getSelectedBaseResolution() {
-      const selected = Number(resolutionSelect.value);
-
-      if (selected === 720) {
-        return { width: 1280, height: 720 };
-      }
-
-      if (selected === 1080) {
-        return { width: 1920, height: 1080 };
-      }
-
-      return { width: 3840, height: 2160 };
-    }
-
-    function getIdealCameraResolution() {
-      const selected = Number(resolutionSelect.value);
-
-      if (selected === 720) {
-        return { width: 1280, height: 720 };
-      }
-
-      if (selected === 1080) {
-        return { width: 1920, height: 1080 };
-      }
-
-      return { width: 3840, height: 2160 };
-    }
 
     function createShader(gl, type, source) {
       const shader = gl.createShader(type);
@@ -311,10 +271,9 @@
 
     function setupCanvasSize(sourceWidth, sourceHeight) {
       const isPortrait = sourceHeight > sourceWidth;
-      const base = getSelectedBaseResolution();
 
-      width = isPortrait ? base.height : base.width;
-      height = isPortrait ? base.width : base.height;
+      width = isPortrait ? 720 : 1280;
+      height = isPortrait ? 1280 : 720;
 
       canvas.width = width;
       canvas.height = height;
@@ -495,11 +454,7 @@
         codec,
         width,
         height,
-        bitrate: width * height >= 3840 * 2160
-          ? 24_000_000
-          : width * height >= 1920 * 1080
-            ? 10_000_000
-            : 5_000_000,
+        bitrate: width * height >= 1280 * 720 ? 5_000_000 : 2_000_000,
         framerate: outputFps,
         hardwareAcceleration: "prefer-hardware",
         latencyMode: "quality",
@@ -547,15 +502,13 @@
         encodedFrameCount = 0;
         isRecording = false;
 
-        const ideal = getIdealCameraResolution();
-
-        statusText.textContent = `Starting camera... requested ${ideal.width}x${ideal.height}`;
+        statusText.textContent = "Starting camera...";
 
         cameraStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
-            width: { ideal: ideal.width },
-            height: { ideal: ideal.height },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
             frameRate: { ideal: 30, max: 30 }
           },
           audio: false
@@ -580,10 +533,9 @@
         startBtn.disabled = true;
         stopBtn.disabled = false;
         windowSecSelect.disabled = true;
-        resolutionSelect.disabled = true;
 
         statusText.textContent =
-          `Recording GPU frames... camera: ${video.videoWidth}x${video.videoHeight}, output: ${width}x${height}`;
+          `Recording GPU frames... output: ${width}x${height}`;
       } catch (error) {
         console.error(error);
         statusText.textContent = `Error: ${error.message}`;
@@ -661,7 +613,6 @@
       startBtn.disabled = false;
       stopBtn.disabled = true;
       windowSecSelect.disabled = false;
-      resolutionSelect.disabled = false;
 
       if (resetStatus) {
         statusText.textContent = "Ready";
