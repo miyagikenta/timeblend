@@ -1,6 +1,6 @@
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.7.1-facing-mode-select";
+    const VERSION = "v0.7.2-facing-back-default-fallback";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -275,6 +275,38 @@
         height: { ideal: 2160 },
         frameRate: { ideal: 30, max: 30 }
       };
+    }
+
+    function isFacingFallbackRetriableError(err) {
+      return (
+        err != null &&
+        (err.name === "NotFoundError" || err.name === "OverconstrainedError")
+      );
+    }
+
+    /**
+     * タイムラプス用途で既定は背面。ノート PC 等で背面が無い場合のみ前面へ切替えて再試行する。
+     */
+    async function acquireCameraProbeStream() {
+      const open = () =>
+        navigator.mediaDevices.getUserMedia({
+          video: cameraProbeConstraints(),
+          audio: false
+        });
+
+      try {
+        return await open();
+      } catch (err) {
+        const triedBack = facingModeSelect.value === "environment";
+        if (!triedBack || !isFacingFallbackRetriableError(err)) {
+          throw err;
+        }
+
+        statusText.textContent =
+          "背面カメラが使えないため、前面カメラに切り替えます…";
+        facingModeSelect.value = "user";
+        return await open();
+      }
     }
 
     function maxFromCapabilityRange(range) {
@@ -632,10 +664,7 @@
 
         statusText.textContent = "Starting camera...";
 
-        cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: cameraProbeConstraints(),
-          audio: false
-        });
+        cameraStream = await acquireCameraProbeStream();
 
         const [videoTrack] = cameraStream.getVideoTracks();
         syncOutputPresetOptionsWithCapabilities(videoTrack);
@@ -654,11 +683,30 @@
           await applyPresetConstraintsToVideoTrack(videoTrack);
         } catch (constraintError) {
           console.warn(constraintError);
-          cameraStream.getTracks().forEach(t => t.stop());
-          cameraStream = null;
-          statusText.textContent =
-            "選択中の解像度にカメラを合わせられませんでした。別の行を選んでから再度 Start してください。";
-          return;
+          const canTryFront =
+            facingModeSelect.value === "environment" &&
+            isFacingFallbackRetriableError(constraintError);
+          if (canTryFront) {
+            statusText.textContent =
+              "背面のまま解像度に合わせられないため、前面に切り替えます…";
+            facingModeSelect.value = "user";
+            try {
+              await applyPresetConstraintsToVideoTrack(videoTrack);
+            } catch (e2) {
+              console.warn(e2);
+              cameraStream.getTracks().forEach(t => t.stop());
+              cameraStream = null;
+              statusText.textContent =
+                "選択中の解像度にカメラを合わせられませんでした。別の行を選んでから再度 Start してください。";
+              return;
+            }
+          } else {
+            cameraStream.getTracks().forEach(t => t.stop());
+            cameraStream = null;
+            statusText.textContent =
+              "選択中の解像度にカメラを合わせられませんでした。別の行を選んでから再度 Start してください。";
+            return;
+          }
         }
 
         video.srcObject = cameraStream;
