@@ -121,6 +121,7 @@ python3 -m http.server 8080
 - 出力解像度: 横 1280×720 / 1920×1080 / 3840×2160、縦は長辺入れ替え
 - MP4 ダウンロード・結果 `<video>` 再生
 - 録画中は平均窓・解像度セレクト無効化
+- 解像度制約に失敗した場合は **Camera facing へ自動フォールバックしない**。`Output resolution` の変更（必要なら `Camera facing` 変更）を促して再試行させる
 - **サンプリング**: `requestVideoFrameCallback` 優先、未対応は `setInterval`（100ms）
 - **WebGL**: uniform のキャッシュ、`cleanup` から `teardownWebGL` でリソース解放（`gl.finish` は削除済み）
 - **音声なし**: 録画・MP4 は **映像トラックのみ**（`getUserMedia` で `audio: false`）。

@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.7.9-pico-first";
+const VERSION = "v0.8.0-resolution-first";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -364,6 +364,37 @@ async function applyPresetConstraintsToVideoTrack(videoTrack) {
   );
 }
 
+function releaseCameraStream() {
+  if (!cameraStream) return;
+  cameraStream.getTracks().forEach(track => track.stop());
+  cameraStream = null;
+}
+
+function selectedFacingLabel() {
+  return selectedFacingMode() === "environment"
+    ? "Back (environment)"
+    : "Front (user)";
+}
+
+function selectedOutputPresetLabel() {
+  return (
+    outputPresetSelect.selectedOptions[0]?.textContent?.trim() ??
+    "選択中の解像度"
+  );
+}
+
+function showOutputPresetUnavailableStatus() {
+  statusText.textContent =
+    `${selectedOutputPresetLabel()} はこのカメラでは使えません。` +
+    "Output resolution を変更してから再度 Start してください。";
+}
+
+function showOutputPresetConstraintFailureStatus() {
+  statusText.textContent =
+    `選択中の解像度を ${selectedFacingLabel()} で使えません。` +
+    "Output resolution を下げるか、Camera facing を変更してから再度 Start してください。";
+}
+
 function stopSampleLoop() {
   if (sampleRvfHandle !== null && typeof video.cancelVideoFrameCallback === "function") {
     video.cancelVideoFrameCallback(sampleRvfHandle);
@@ -657,15 +688,15 @@ async function setupEncoder() {
 }
 
 async function start() {
-    try {
-      resultVideo.removeAttribute("src");
-      resultVideo.load();
-      if (lastMp4ObjectUrl) {
-        URL.revokeObjectURL(lastMp4ObjectUrl);
-        lastMp4ObjectUrl = null;
-      }
-      downloadLink.hidden = true;
-      downloadLink.removeAttribute("href");
+  try {
+    resultVideo.removeAttribute("src");
+    resultVideo.load();
+    if (lastMp4ObjectUrl) {
+      URL.revokeObjectURL(lastMp4ObjectUrl);
+      lastMp4ObjectUrl = null;
+    }
+    downloadLink.hidden = true;
+    downloadLink.removeAttribute("href");
 
     encodedFrameCount = 0;
     isRecording = false;
@@ -678,12 +709,8 @@ async function start() {
     syncOutputPresetOptionsWithCapabilities(videoTrack);
 
     if (!isOutputPresetSelectionAllowed()) {
-      const label =
-        outputPresetSelect.selectedOptions[0]?.textContent?.trim() ??
-        "選択中の解像度";
-      cameraStream.getTracks().forEach(t => t.stop());
-      cameraStream = null;
-      statusText.textContent = `${label} はこのカメラでは使えません。プルダウンを変更してから再度 Start してください。`;
+      releaseCameraStream();
+      showOutputPresetUnavailableStatus();
       return;
     }
 
@@ -691,30 +718,9 @@ async function start() {
       await applyPresetConstraintsToVideoTrack(videoTrack);
     } catch (constraintError) {
       console.warn(constraintError);
-      const canTryFront =
-        facingModeSelect.value === "environment" &&
-        isFacingFallbackRetriableError(constraintError);
-      if (canTryFront) {
-        statusText.textContent =
-          "背面のまま解像度に合わせられないため、前面に切り替えます…";
-        facingModeSelect.value = "user";
-        try {
-          await applyPresetConstraintsToVideoTrack(videoTrack);
-        } catch (e2) {
-          console.warn(e2);
-          cameraStream.getTracks().forEach(t => t.stop());
-          cameraStream = null;
-          statusText.textContent =
-            "選択中の解像度にカメラを合わせられませんでした。別の行を選んでから再度 Start してください。";
-          return;
-        }
-      } else {
-        cameraStream.getTracks().forEach(t => t.stop());
-        cameraStream = null;
-        statusText.textContent =
-          "選択中の解像度にカメラを合わせられませんでした。別の行を選んでから再度 Start してください。";
-        return;
-      }
+      releaseCameraStream();
+      showOutputPresetConstraintFailureStatus();
+      return;
     }
 
     video.srcObject = cameraStream;
@@ -760,9 +766,7 @@ async function stop() {
 
   isRecording = false;
 
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-  }
+  releaseCameraStream();
 
   video.srcObject = null;
 
@@ -811,11 +815,7 @@ function cleanup(resetStatus = true) {
 
   teardownWebGL();
 
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-  }
-
-  cameraStream = null;
+  releaseCameraStream();
   video.srcObject = null;
 
   encoder = null;
