@@ -64,7 +64,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.6.4-output-resolution";
+    const VERSION = "v0.6.5-perf-teardown-rvfc";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -90,6 +90,7 @@
 
     let cameraStream = null;
     let sampleTimer = null;
+    let sampleRvfHandle = null;
     let emitTimer = null;
 
     let videoTexture = null;
@@ -107,6 +108,11 @@
     let accumulateProgram = null;
     let displayProgram = null;
     let quadVao = null;
+
+    let locAccumVideo = null;
+    let locAccumPrev = null;
+    let locDisplayAccum = null;
+    let locDisplayCount = null;
 
     const vertexShaderSource = `#version 300 es
       in vec2 a_position;
@@ -320,6 +326,69 @@
       };
     }
 
+    function stopSampleLoop() {
+      if (sampleRvfHandle !== null && typeof video.cancelVideoFrameCallback === "function") {
+        video.cancelVideoFrameCallback(sampleRvfHandle);
+      }
+      sampleRvfHandle = null;
+      if (sampleTimer !== null) {
+        clearInterval(sampleTimer);
+        sampleTimer = null;
+      }
+    }
+
+    function startSampleLoop() {
+      if (typeof video.requestVideoFrameCallback === "function") {
+        function onVideoFrame() {
+          if (!isRecording) return;
+          accumulateFrameGpu();
+          sampleRvfHandle = video.requestVideoFrameCallback(onVideoFrame);
+        }
+        sampleRvfHandle = video.requestVideoFrameCallback(onVideoFrame);
+      } else {
+        sampleTimer = setInterval(accumulateFrameGpu, sampleIntervalMs);
+      }
+    }
+
+    function teardownWebGL() {
+      if (!gl) return;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+
+      if (accumulateProgram) gl.deleteProgram(accumulateProgram);
+      if (displayProgram) gl.deleteProgram(displayProgram);
+      accumulateProgram = null;
+      displayProgram = null;
+
+      locAccumVideo = null;
+      locAccumPrev = null;
+      locDisplayAccum = null;
+      locDisplayCount = null;
+
+      for (const fb of framebuffers) {
+        if (fb) gl.deleteFramebuffer(fb);
+      }
+      framebuffers = [];
+
+      for (const t of accumTextures) {
+        if (t) gl.deleteTexture(t);
+      }
+      accumTextures = [];
+
+      if (videoTexture) gl.deleteTexture(videoTexture);
+      videoTexture = null;
+
+      if (quadVao) gl.deleteVertexArray(quadVao);
+      quadVao = null;
+
+      gl = null;
+      ping = 0;
+      sampleCount = 0;
+    }
+
     function setupWebGL() {
       gl = canvas.getContext("webgl2", {
         alpha: false,
@@ -349,6 +418,11 @@
         vertexShaderSource,
         displayFragmentShaderSource
       );
+
+      locAccumVideo = gl.getUniformLocation(accumulateProgram, "u_video");
+      locAccumPrev = gl.getUniformLocation(accumulateProgram, "u_prevAccum");
+      locDisplayAccum = gl.getUniformLocation(displayProgram, "u_accum");
+      locDisplayCount = gl.getUniformLocation(displayProgram, "u_count");
 
       quadVao = setupQuad(gl);
       videoTexture = createVideoTexture(gl);
@@ -409,16 +483,13 @@
         gl.useProgram(accumulateProgram);
         gl.bindVertexArray(quadVao);
 
-        const videoLocation = gl.getUniformLocation(accumulateProgram, "u_video");
-        const prevLocation = gl.getUniformLocation(accumulateProgram, "u_prevAccum");
-
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-        gl.uniform1i(videoLocation, 0);
+        gl.uniform1i(locAccumVideo, 0);
 
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, accumTextures[prevIndex]);
-        gl.uniform1i(prevLocation, 1);
+        gl.uniform1i(locAccumPrev, 1);
 
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -439,16 +510,12 @@
       gl.useProgram(displayProgram);
       gl.bindVertexArray(quadVao);
 
-      const accumLocation = gl.getUniformLocation(displayProgram, "u_accum");
-      const countLocation = gl.getUniformLocation(displayProgram, "u_count");
-
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, accumTextures[ping]);
-      gl.uniform1i(accumLocation, 0);
-      gl.uniform1f(countLocation, sampleCount);
+      gl.uniform1i(locDisplayAccum, 0);
+      gl.uniform1f(locDisplayCount, sampleCount);
 
       gl.drawArrays(gl.TRIANGLES, 0, 6);
-      gl.finish();
 
       return true;
     }
@@ -580,7 +647,7 @@
 
         const averageWindowMs = Number(windowSecSelect.value) * 1000;
 
-        sampleTimer = setInterval(accumulateFrameGpu, sampleIntervalMs);
+        startSampleLoop();
         emitTimer = setInterval(emitAverageFrame, averageWindowMs);
 
         startBtn.disabled = true;
@@ -601,8 +668,9 @@
       startBtn.disabled = true;
       stopBtn.disabled = true;
 
-      clearInterval(sampleTimer);
+      stopSampleLoop();
       clearInterval(emitTimer);
+      emitTimer = null;
 
       emitAverageFrame();
 
@@ -649,8 +717,11 @@
     }
 
     function cleanup(resetStatus = true) {
-      clearInterval(sampleTimer);
+      stopSampleLoop();
       clearInterval(emitTimer);
+      emitTimer = null;
+
+      teardownWebGL();
 
       if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
