@@ -49,6 +49,7 @@
     </select>
   </label>
   <p class="small">縦持ちカメラでは長辺に合わせて 720×1280 / 1080×1920 / 2160×3840 になります。</p>
+  <p class="small">Start 時にカメラの getCapabilities() で幅・高さの上限を読み、この端末で扱えないプリセットは無効化されます。</p>
 
   <br />
 
@@ -70,7 +71,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.6.6-average-window-60min";
+    const VERSION = "v0.6.7-output-preset-capabilities";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -330,6 +331,72 @@
         height: { ideal: lh },
         frameRate: { ideal: 30, max: 30 }
       };
+    }
+
+    function cameraProbeConstraints() {
+      return {
+        facingMode: "environment",
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30, max: 30 }
+      };
+    }
+
+    function maxFromCapabilityRange(range) {
+      if (range == null) return null;
+      const m = range.max;
+      return typeof m === "number" && Number.isFinite(m) ? m : null;
+    }
+
+    function presetFitsCameraMax(wMax, hMax, lw, lh) {
+      if (wMax == null || hMax == null) return true;
+      return (wMax >= lw && hMax >= lh) || (wMax >= lh && hMax >= lw);
+    }
+
+    function syncOutputPresetOptionsWithCapabilities(track) {
+      for (const opt of outputPresetSelect.options) {
+        opt.disabled = false;
+      }
+
+      if (typeof track.getCapabilities !== "function") return;
+
+      const caps = track.getCapabilities();
+      const wMax = maxFromCapabilityRange(caps.width);
+      const hMax = maxFromCapabilityRange(caps.height);
+      if (wMax == null || hMax == null) return;
+
+      for (const opt of outputPresetSelect.options) {
+        const [lw, lh] = landscapeSizeForPreset(opt.value);
+        opt.disabled = !presetFitsCameraMax(wMax, hMax, lw, lh);
+      }
+
+      if ([...outputPresetSelect.options].every(o => o.disabled)) {
+        const o720 = outputPresetSelect.querySelector('option[value="720"]');
+        if (o720) o720.disabled = false;
+      }
+    }
+
+    function ensureValidOutputPresetSelection() {
+      const sel = outputPresetSelect;
+      const cur = sel.options[sel.selectedIndex];
+      if (cur && !cur.disabled) return;
+
+      for (const value of ["2160", "1080", "720"]) {
+        const o = [...sel.options].find(x => x.value === value && !x.disabled);
+        if (o) {
+          sel.value = value;
+          return;
+        }
+      }
+
+      const any = [...sel.options].find(x => !x.disabled);
+      if (any) sel.value = any.value;
+    }
+
+    function resetOutputPresetOptionsEnabled() {
+      for (const opt of outputPresetSelect.options) {
+        opt.disabled = false;
+      }
     }
 
     function stopSampleLoop() {
@@ -636,9 +703,24 @@
         statusText.textContent = "Starting camera...";
 
         cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: cameraConstraintsForPreset(outputPresetSelect.value),
+          video: cameraProbeConstraints(),
           audio: false
         });
+
+        const [videoTrack] = cameraStream.getVideoTracks();
+        syncOutputPresetOptionsWithCapabilities(videoTrack);
+        ensureValidOutputPresetSelection();
+
+        try {
+          await videoTrack.applyConstraints(
+            cameraConstraintsForPreset(outputPresetSelect.value)
+          );
+        } catch (constraintError) {
+          console.warn(constraintError);
+          outputPresetSelect.value = "720";
+          ensureValidOutputPresetSelection();
+          await videoTrack.applyConstraints(cameraConstraintsForPreset("720"));
+        }
 
         video.srcObject = cameraStream;
         await video.play();
@@ -745,6 +827,7 @@
       stopBtn.disabled = true;
       windowSecSelect.disabled = false;
       outputPresetSelect.disabled = false;
+      resetOutputPresetOptionsEnabled();
 
       if (resetStatus) {
         statusText.textContent = "Ready";
