@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.7.6-html-js-format";
+const VERSION = "v0.7.9-pico-first";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;

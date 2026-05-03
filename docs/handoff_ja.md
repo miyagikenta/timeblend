@@ -49,7 +49,7 @@ python3 -m http.server 8080
 | パス | 役割 |
 |------|------|
 | `index.html` | マークアップ・コントロール ID |
-| `app.css` | スタイル |
+| `app.css` | プレビュー枠（`.stage`）のみ（他は Pico） |
 | `app.js` | ロジック（単一モジュール） |
 | `README.md` | 英語・利用者向け・公開前提の注意 |
 | `docs/handoff_ja.md` | 本書（日本語・実装者向け） |
@@ -100,7 +100,7 @@ python3 -m http.server 8080
 
 | 用途 | 技術 |
 |------|------|
-| UI | `index.html` + `app.css` |
+| UI | `index.html`（Pico セマンティクス）+ **Pico CSS (CDN)** + **`app.css` は `.stage` のみ** |
 | ロジック | `app.js`（`type="module"`） |
 | カメラ | MediaDevices / `getUserMedia` |
 | 蓄積・表示 | WebGL2、`EXT_color_buffer_float` 必須 |
@@ -109,7 +109,8 @@ python3 -m http.server 8080
 
 ## UI / スタイル（方針）
 
-- **OSS の CSS 土台**を入れる場合は、**React 等を前提にしないもの**に絞り、**複数を比較してから採用**する。
+- **スタイルの正**は **Pico CSS（CDN）**。マークアップは **`main.container`・`<article>`（カード）・`<header>`・`grid`・`role="group"`** など Pico のセマンティクスに寄せる。
+- **`app.css` は Pico だけでは足りない部分のみ**（現状は **`video` / `canvas` 用 `.stage`**＝黒ベタ・枠・角丸・はみ出し抑制）。全体の色・タイポ・フォーム・ボタンは Pico に任せる。
 - **候補の一覧・ティア・比較表はこのリポジトリの引き継ぎ資料には書かない**（チャット・個人メモ・issue など、必要な場所にだけ残す）。
 - **対象外の例**: Ant Design、MUI、Chakra など **UI＝フレームワーク前提**のライブラリ。
 - **利用規約など静的ページ**は **別 HTML（MPA）＋同じ CSS 土台**で足せる想定。**`video` / `canvas` プレビュー**は **`app.css` に差分が残りやすい**。

@@ -24,6 +24,7 @@ Instead of “keep one frame every *N* seconds”, timeblend does:
 ## Tech stack
 
 - MediaDevices / `getUserMedia`
+- [Pico CSS](https://picocss.com/) via CDN; local `app.css` only for **video/canvas preview** framing (`.stage`)
 - WebGL2 (float accumulation, ping-pong textures)
 - WebCodecs `VideoEncoder` (H.264; codec string chosen with `isConfigSupported`)
 - `Canvas` + `VideoFrame` for encoder input
@@ -54,7 +55,7 @@ Open `http://localhost:8080/` and allow the camera.
 | File | Role |
 |------|------|
 | `index.html` | Page structure |
-| `app.css` | Styles |
+| `app.css` | Preview surface chrome only (`.stage`) |
 | `app.js` | Application logic (`type="module"`) |
 
 More context (Japanese, includes a **cold-start / resume checklist** and a **code map**): [`docs/handoff_ja.md`](docs/handoff_ja.md).

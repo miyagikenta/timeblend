@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="ja" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,22 +7,25 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>timeblend</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
   <link rel="stylesheet" href="app.css" />
 </head>
 
 <body>
-  <div class="wrap">
-    <header class="hero">
+  <main class="container">
+    <header>
       <h1>timeblend</h1>
-      <p class="tagline">GPU temporal averaging timelapse prototype</p>
-      <p id="version" class="meta"></p>
+      <p>GPU temporal averaging timelapse prototype</p>
+      <small id="version"></small>
     </header>
 
-    <section class="panel" aria-label="Recording controls">
-      <h2 class="panel-title">Recording</h2>
-      <div class="fields">
-        <div class="field">
-          <label for="windowSec">Average window</label>
+    <article aria-label="Recording controls">
+      <header>
+        <h2>Recording</h2>
+      </header>
+      <div class="grid">
+        <label for="windowSec">
+          Average window
           <select id="windowSec">
             <option value="1">1 sec</option>
             <option value="3" selected>3 sec</option>
@@ -37,53 +40,59 @@
             <option value="1800">30 min</option>
             <option value="3600">60 min</option>
           </select>
-        </div>
-        <div class="field">
-          <label for="outputPreset">Output resolution</label>
+        </label>
+        <label for="outputPreset">
+          Output resolution
           <select id="outputPreset">
             <option value="720">720p (1280×720)</option>
             <option value="1080" selected>1080p (1920×1080)</option>
             <option value="2160">4K (3840×2160)</option>
           </select>
-        </div>
-        <div class="field">
-          <label for="facingMode">Camera facing</label>
+        </label>
+        <label for="facingMode">
+          Camera facing
           <select id="facingMode">
             <option value="environment" selected>Back (environment)</option>
             <option value="user">Front (user)</option>
           </select>
-        </div>
+        </label>
       </div>
-      <p class="hint">縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート PC など背面カメラが無い場合は、Start 時に前面へ切り替わります。</p>
-      <div class="actions">
-        <button type="button" id="startBtn" class="btn btn-primary">Start</button>
-        <button type="button" id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
+      <small>縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート PC など背面カメラが無い場合は、Start 時に前面へ切り替わります。</small>
+      <div role="group">
+        <button type="button" id="startBtn">Start</button>
+        <button type="button" id="stopBtn" class="secondary" disabled>Stop</button>
       </div>
-      <p id="status" class="status">Ready</p>
-    </section>
+      <p id="status" role="status" aria-live="polite">Ready</p>
+    </article>
 
-    <section class="panel" aria-label="Camera preview">
-      <h2 class="panel-title">Camera</h2>
+    <article aria-label="Camera preview">
+      <header>
+        <h2>Camera</h2>
+      </header>
       <div class="stage">
         <video id="camera" autoplay playsinline muted></video>
       </div>
-    </section>
+    </article>
 
-    <section class="panel" aria-label="Blended preview">
-      <h2 class="panel-title">Blended output</h2>
+    <article aria-label="Blended preview">
+      <header>
+        <h2>Blended output</h2>
+      </header>
       <div class="stage">
         <canvas id="output"></canvas>
       </div>
-    </section>
+    </article>
 
-    <section class="panel" aria-label="Encoded result">
-      <h2 class="panel-title">Result</h2>
+    <article aria-label="Encoded result">
+      <header>
+        <h2>Result</h2>
+      </header>
       <div class="stage">
         <video id="result" controls playsinline></video>
       </div>
-      <a id="download" href="#" hidden>Download MP4</a>
-    </section>
-  </div>
+      <a id="download" href="#" role="button" class="secondary outline" hidden>Download MP4</a>
+    </article>
+  </main>
 
   <script type="module" src="app.js"></script>
 </body>
