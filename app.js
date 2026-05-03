@@ -1,6 +1,6 @@
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.7.4-default-output-1080p";
+    const VERSION = "v0.7.5-css-tokens-status";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
