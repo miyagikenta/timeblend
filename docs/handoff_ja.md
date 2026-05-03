@@ -29,6 +29,14 @@
 
 ---
 
+## リポジトリの所在（GitHub）
+
+- **正**: `https://github.com/lumetriq-labs/timeblend`
+- **移管**: 旧 `miyagikenta/timeblend` から GitHub の **Transfer ownership** で `lumetriq-labs` へ移した。旧 URL はしばらくリダイレクトされることが多いが、**ブックマーク・クローン元・`git remote` は新 URL に寄せる**のが安全。
+- **GitHub Pages 等**: デモを Pages に載せていた場合、**Org 配下リポジトリの Settings → Pages** が有効か・公開ブランチ/ディレクトリが意図どおりかを再確認する。
+
+---
+
 ## 手元で動かす
 
 `file://` ではモジュール import が失敗しやすい。**必ず HTTP(S)** で `index.html` を開く。

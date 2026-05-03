@@ -2,6 +2,8 @@
 
 A browser demo that builds a timelapse-like clip by **temporal averaging** (blending frames over a time window) instead of only dropping frames.
 
+**Repository:** [github.com/lumetriq-labs/timeblend](https://github.com/lumetriq-labs/timeblend)
+
 ## Overview
 
 The camera stream is accumulated on the GPU, averaged over a configurable window, encoded to **H.264**, and muxed to **MP4** in the browser.
