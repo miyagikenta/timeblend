@@ -46,8 +46,15 @@
             <option value="2160">4K (3840×2160)</option>
           </select>
         </div>
+        <div class="field">
+          <label for="facingMode">Camera facing</label>
+          <select id="facingMode">
+            <option value="user" selected>Front (user)</option>
+            <option value="environment">Back (environment)</option>
+          </select>
+        </div>
       </div>
-      <p class="hint">縦持ちでは 720×1280 / 1080×1920 / 2160×3840。</p>
+      <p class="hint">縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート Mac の内蔵カメラでは通常 Front を選んでください。</p>
       <div class="actions">
         <button type="button" id="startBtn" class="btn btn-primary">Start</button>
         <button type="button" id="stopBtn" class="btn btn-secondary" disabled>Stop</button>

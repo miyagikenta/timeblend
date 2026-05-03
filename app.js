@@ -1,6 +1,6 @@
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.7.0-split-app-css-js";
+    const VERSION = "v0.7.1-facing-mode-select";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -11,6 +11,7 @@
     const stopBtn = document.getElementById("stopBtn");
     const windowSecSelect = document.getElementById("windowSec");
     const outputPresetSelect = document.getElementById("outputPreset");
+    const facingModeSelect = document.getElementById("facingMode");
     const statusText = document.getElementById("status");
     const resultVideo = document.getElementById("result");
     const downloadLink = document.getElementById("download");
@@ -252,10 +253,15 @@
       return 35_000_000;
     }
 
+    function selectedFacingMode() {
+      const v = facingModeSelect.value;
+      return v === "environment" ? "environment" : "user";
+    }
+
     function cameraConstraintsForPreset(preset) {
       const [lw, lh] = landscapeSizeForPreset(preset);
       return {
-        facingMode: "environment",
+        facingMode: selectedFacingMode(),
         width: { ideal: lw },
         height: { ideal: lh },
         frameRate: { ideal: 30, max: 30 }
@@ -264,7 +270,7 @@
 
     function cameraProbeConstraints() {
       return {
-        facingMode: "environment",
+        facingMode: selectedFacingMode(),
         width: { ideal: 3840 },
         height: { ideal: 2160 },
         frameRate: { ideal: 30, max: 30 }
@@ -675,6 +681,7 @@
         stopBtn.disabled = false;
         windowSecSelect.disabled = true;
         outputPresetSelect.disabled = true;
+        facingModeSelect.disabled = true;
 
         statusText.textContent =
           `Recording GPU frames... output: ${width}x${height} (camera ${video.videoWidth}×${video.videoHeight})`;
@@ -760,6 +767,7 @@
       stopBtn.disabled = true;
       windowSecSelect.disabled = false;
       outputPresetSelect.disabled = false;
+      facingModeSelect.disabled = false;
       resetOutputPresetOptionsEnabled();
 
       if (resetStatus) {
