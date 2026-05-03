@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.8.1-consent-modal";
+const VERSION = "v0.8.2-no-auto-facing";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -288,36 +288,29 @@ function cameraProbeConstraints() {
   };
 }
 
-function isFacingFallbackRetriableError(err) {
-  return (
-    err != null &&
-    (err.name === "NotFoundError" || err.name === "OverconstrainedError")
-  );
-}
-
 /**
- * タイムラプス用途で既定は背面。ノート PC 等で背面が無い場合のみ前面へ切替えて再試行する。
+ * 既定は背面。背面が使えない場合も UI を勝手に書き換えず、ユーザーに Camera facing を変更してもらう。
  */
 async function acquireCameraProbeStream() {
-  const open = () =>
-    navigator.mediaDevices.getUserMedia({
-      video: cameraProbeConstraints(),
-      audio: false
-    });
+  return navigator.mediaDevices.getUserMedia({
+    video: cameraProbeConstraints(),
+    audio: false
+  });
+}
 
-  try {
-    return await open();
-  } catch (err) {
-    const triedBack = facingModeSelect.value === "environment";
-    if (!triedBack || !isFacingFallbackRetriableError(err)) {
-      throw err;
-    }
-
+function showCameraAcquisitionFailureStatus(error) {
+  const name = error?.name ?? "";
+  const backSelected = selectedFacingMode() === "environment";
+  if (
+    backSelected &&
+    (name === "NotFoundError" || name === "OverconstrainedError")
+  ) {
     statusText.textContent =
-      "背面カメラが使えないため、前面カメラに切り替えます…";
-    facingModeSelect.value = "user";
-    return await open();
+      "背面カメラを開けませんでした。Camera facing を Front (user) に変更してから再度 Start してください。";
+    return;
   }
+  statusText.textContent =
+    `カメラを開けませんでした: ${error?.message ?? String(error)}`;
 }
 
 function maxFromCapabilityRange(range) {
@@ -805,8 +798,8 @@ async function start() {
       `Recording GPU frames... output: ${width}x${height} (camera ${video.videoWidth}×${video.videoHeight})`;
   } catch (error) {
     console.error(error);
-    statusText.textContent = `Error: ${error.message}`;
-    cleanup();
+    showCameraAcquisitionFailureStatus(error);
+    cleanup(false);
   }
 }
 

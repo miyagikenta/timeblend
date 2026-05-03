@@ -65,7 +65,7 @@ python3 -m http.server 8080
 | カメラの時間サンプリング | `startSampleLoop` / `stopSampleLoop`（`requestVideoFrameCallback` または `setInterval`） |
 | 平均窓ごとの出力フレーム | `emitAverageFrame`、`emitTimer`（`setInterval`） |
 | WebGL の解放 | `teardownWebGL`（`cleanup` から呼ばれる） |
-| カメラの取得（背面→前面フォールバック含む） | `acquireCameraProbeStream` |
+| カメラの取得（`getUserMedia` プローブ） | `acquireCameraProbeStream` |
 | 出力プリセットと `getCapabilities` の同期 | `syncOutputPresetOptionsWithCapabilities` |
 | 解像度・向きの制約適用 | `applyPresetConstraintsToVideoTrack`、`cameraConstraintsForPreset` |
 | WebGL 初期化・シェーダ | `setupWebGL`、`accumulateFrameGpu` |
@@ -74,7 +74,7 @@ python3 -m http.server 8080
 
 **外部依存（版の真実は import 行）**: `https://esm.sh/mp4-muxer@…`（README の Privacy にも触れあり）。
 
-**UI 文言**: `index.html` は **`lang="ja"`** だが、ラベル類は **主に英語**。日本語は `.hint` など一部。**文言の正はマークアップ側**。
+**UI 文言**: `index.html` は **`lang="ja"`** だが、ラベル類は **主に英語**。日本語は録画フォーム内の `<small>` など一部。**文言の正はマークアップ側**。
 
 ---
 
@@ -90,8 +90,8 @@ python3 -m http.server 8080
 
 ## 処理パイプライン
 
-1. **getUserMedia**（`acquireCameraProbeStream`）：まず高めの `ideal` でプローブ。**既定は背面**（`environment`）。**背面が使えない／制約に合わない**ときは `NotFoundError` / `OverconstrainedError` の一定条件で **前面（`user`）に切り替えて再取得**（ノート等）。**音声は取らない**（`audio: false`）。→ トラックの **getCapabilities()** で幅・高さ上限を読み、**この端末では選べない出力プリセットを `disabled` にする**（`syncOutputPresetOptionsWithCapabilities`）
-2. **選択中プリセットが無効** → 中止・メッセージ（**プルダウンの値を勝手に書き換えない**）。**`applyConstraints` が失敗** → 背面かつ取り直し可能なエラーなら **`start` 内で前面へ切替えて再試行**、それ以外または再試行後も失敗ならストリームを止め、**録画には進まず**メッセージのみ。
+1. **getUserMedia**（`acquireCameraProbeStream`）：まず高めの `ideal` でプローブ。**既定は背面**（`environment`）。**背面が開けない**場合は UI を勝手に書き換えず、**Camera facing を Front (user) に変更して再試行**するよう案内する。**音声は取らない**（`audio: false`）。→ トラックの **getCapabilities()** で幅・高さ上限を読み、**この端末では選べない出力プリセットを `disabled` にする**（`syncOutputPresetOptionsWithCapabilities`）
+2. **選択中プリセットが無効** → 中止・メッセージ（**プルダウンの値を勝手に書き換えない**）。**`applyConstraints` が失敗** → ストリームを止め、**Output resolution を下げるか Camera facing を変更して再試行**するよう案内し、**録画には進まない**。
 3. 問題なければ **WebGL2** でテクスチャ蓄積（`RGBA32F`、ピンポン）
 4. **平均ウィンドウ**（1 秒〜60 分）ごとに平均をキャンバスへ描画
 5. **WebCodecs** `VideoEncoder`（H.264）→ **mp4-muxer**（`esm.sh` の ESM import）で MP4 化
@@ -121,7 +121,7 @@ python3 -m http.server 8080
 - 出力解像度: 横 1280×720 / 1920×1080 / 3840×2160、縦は長辺入れ替え
 - MP4 ダウンロード・結果 `<video>` 再生
 - 録画中は平均窓・解像度セレクト無効化
-- 解像度制約に失敗した場合は **Camera facing へ自動フォールバックしない**。`Output resolution` の変更（必要なら `Camera facing` 変更）を促して再試行させる
+- **Camera facing への自動フォールバックはしない**（背面が開けない／解像度制約に失敗した場合は、ユーザーに **Camera facing / Output resolution** の変更を促して再試行させる）
 - 初回利用時は **同意モーダル**で Privacy / Terms の確認と同意が必須。`localStorage` の `timeblend.consent.v1` に同意状態を保存する
 - **サンプリング**: `requestVideoFrameCallback` 優先、未対応は `setInterval`（100ms）
 - **WebGL**: uniform のキャッシュ、`cleanup` から `teardownWebGL` でリソース解放（`gl.finish` は削除済み）
@@ -156,7 +156,7 @@ python3 -m http.server 8080
 
 ### DOM の id（UI 改修用）
 
-`index.html` から読み取れる **主要 id**（追加・リネーム時は `app.js` の `getElementById` と揃える）: `camera`、`output`、`startBtn`、`stopBtn`、`windowSec`、`outputPreset`、`facingMode`、`status`、`result`、`download`、`version`。
+`index.html` から読み取れる **主要 id**（追加・リネーム時は `app.js` の `getElementById` と揃える）: `camera`、`output`、`startBtn`、`stopBtn`、`windowSec`、`outputPreset`、`facingMode`、`status`、`result`、`download`、`version`、`consentModal`、`consentModalCheck`、`consentAcceptBtn`、`consentCloseBtn`、`consentHeaderCloseBtn`。
 
 ## 直近で必要になりやすいこと
 
