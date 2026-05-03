@@ -59,8 +59,18 @@
           </label>
         </div>
         <small>縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート PC など背面カメラが無い場合は、Start 時に前面へ切り替わります。</small>
+        <small>
+          Start 前に、
+          <a href="./privacy.html">Privacy Policy</a> と
+          <a href="./terms.html">Terms of Use</a>
+          を確認してください。
+        </small>
+        <label for="consentConfirm">
+          <input type="checkbox" id="consentConfirm" />
+          内容を確認し、同意します
+        </label>
         <div class="grid" aria-label="Recording actions">
-          <button type="button" id="startBtn">Start</button>
+          <button type="button" id="startBtn" disabled>Start</button>
           <button type="button" id="stopBtn" class="secondary" disabled>Stop</button>
         </div>
         <p id="status" role="status" aria-live="polite">Ready</p>
@@ -96,6 +106,13 @@
         <a id="download" href="#" role="button" class="secondary outline" hidden>Download MP4</a>
       </footer>
     </article>
+
+    <footer>
+      <small>
+        <a href="./privacy.html">Privacy Policy</a> |
+        <a href="./terms.html">Terms of Use</a>
+      </small>
+    </footer>
   </main>
 
   <script type="module" src="app.js"></script>

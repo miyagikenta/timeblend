@@ -20,6 +20,7 @@ Instead of “keep one frame every *N* seconds”, timeblend does:
 - **Output resolution** presets (720p / 1080p / 4K, portrait swap for tall framing)
 - Presets are checked against `MediaStreamTrack.getCapabilities()` after the camera opens; **Start is aborted** if the chosen preset is not supported or `applyConstraints` fails (the UI selection is not silently changed)
 - On preset constraint failure, the app **does not auto-switch camera facing**; it asks users to adjust **Output resolution** first (or change `Camera facing`) and retry
+- The first use requires checking a consent box after reviewing **Privacy Policy** and **Terms of Use** (stored in `localStorage`)
 - MP4 download and in-page playback (`WebCodecs` + [mp4-muxer](https://github.com/Vanilagy/mp4-muxer) via CDN)
 
 ## Tech stack

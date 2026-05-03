@@ -12,6 +12,7 @@ const stopBtn = document.getElementById("stopBtn");
 const windowSecSelect = document.getElementById("windowSec");
 const outputPresetSelect = document.getElementById("outputPreset");
 const facingModeSelect = document.getElementById("facingMode");
+const consentCheckbox = document.getElementById("consentConfirm");
 const statusText = document.getElementById("status");
 const resultVideo = document.getElementById("result");
 const downloadLink = document.getElementById("download");
@@ -41,6 +42,9 @@ let encoder = null;
 let muxer = null;
 let muxerTarget = null;
 let isRecording = false;
+let hasConsent = false;
+
+const CONSENT_KEY = "timeblend.consent.v1";
 
 /** Revoked when starting a new recording or in cleanup (blob URL leak prevention). */
 let lastMp4ObjectUrl = null;
@@ -395,6 +399,26 @@ function showOutputPresetConstraintFailureStatus() {
     "Output resolution を下げるか、Camera facing を変更してから再度 Start してください。";
 }
 
+function loadConsentState() {
+  try {
+    return localStorage.getItem(CONSENT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveConsentState(checked) {
+  try {
+    localStorage.setItem(CONSENT_KEY, checked ? "1" : "0");
+  } catch {
+    // Ignore storage failures (private mode, quota, etc.)
+  }
+}
+
+function updateStartButtonAvailability() {
+  startBtn.disabled = isRecording || !hasConsent;
+}
+
 function stopSampleLoop() {
   if (sampleRvfHandle !== null && typeof video.cancelVideoFrameCallback === "function") {
     video.cancelVideoFrameCallback(sampleRvfHandle);
@@ -688,6 +712,12 @@ async function setupEncoder() {
 }
 
 async function start() {
+  if (!hasConsent) {
+    statusText.textContent =
+      "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
+    return;
+  }
+
   try {
     resultVideo.removeAttribute("src");
     resultVideo.load();
@@ -739,7 +769,7 @@ async function start() {
     startSampleLoop();
     emitTimer = setInterval(emitAverageFrame, averageWindowMs);
 
-    startBtn.disabled = true;
+    updateStartButtonAvailability();
     stopBtn.disabled = false;
     windowSecSelect.disabled = true;
     outputPresetSelect.disabled = true;
@@ -823,7 +853,7 @@ function cleanup(resetStatus = true) {
   muxerTarget = null;
   isRecording = false;
 
-  startBtn.disabled = false;
+  updateStartButtonAvailability();
   stopBtn.disabled = true;
   windowSecSelect.disabled = false;
   outputPresetSelect.disabled = false;
@@ -831,8 +861,30 @@ function cleanup(resetStatus = true) {
   resetOutputPresetOptionsEnabled();
 
   if (resetStatus) {
-    statusText.textContent = "Ready";
+    statusText.textContent = hasConsent
+      ? "Ready"
+      : "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
   }
+}
+
+hasConsent = loadConsentState();
+if (consentCheckbox) {
+  consentCheckbox.checked = hasConsent;
+  consentCheckbox.addEventListener("change", () => {
+    hasConsent = consentCheckbox.checked;
+    saveConsentState(hasConsent);
+    updateStartButtonAvailability();
+    if (!isRecording) {
+      statusText.textContent = hasConsent
+        ? "Ready"
+        : "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
+    }
+  });
+}
+updateStartButtonAvailability();
+if (!hasConsent) {
+  statusText.textContent =
+    "利用前に Privacy Policy / Terms of Use を確認し、同意チェックを入れてください。";
 }
 
 startBtn.addEventListener("click", start);
