@@ -34,6 +34,16 @@
     </select>
   </label>
 
+  <label>
+    Output resolution:
+    <select id="outputPreset">
+      <option value="720" selected>720p (1280×720)</option>
+      <option value="1080">1080p (1920×1080)</option>
+      <option value="2160">4K (3840×2160)</option>
+    </select>
+  </label>
+  <p class="small">縦持ちカメラでは長辺に合わせて 720×1280 / 1080×1920 / 2160×3840 になります。</p>
+
   <br />
 
   <button id="startBtn">Start</button>
@@ -54,7 +64,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.6.3-webgl2-video-flip-only";
+    const VERSION = "v0.6.4-output-resolution";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -64,6 +74,7 @@
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const windowSecSelect = document.getElementById("windowSec");
+    const outputPresetSelect = document.getElementById("outputPreset");
     const statusText = document.getElementById("status");
     const resultVideo = document.getElementById("result");
     const downloadLink = document.getElementById("download");
@@ -269,14 +280,44 @@
       return vao;
     }
 
+    const OUTPUT_PRESET_LANDSCAPE = {
+      720: [1280, 720],
+      1080: [1920, 1080],
+      2160: [3840, 2160]
+    };
+
+    function landscapeSizeForPreset(preset) {
+      const pair = OUTPUT_PRESET_LANDSCAPE[preset];
+      return pair ?? OUTPUT_PRESET_LANDSCAPE["720"];
+    }
+
     function setupCanvasSize(sourceWidth, sourceHeight) {
+      const preset = outputPresetSelect.value;
+      const [lw, lh] = landscapeSizeForPreset(preset);
       const isPortrait = sourceHeight > sourceWidth;
 
-      width = isPortrait ? 720 : 1280;
-      height = isPortrait ? 1280 : 720;
+      width = isPortrait ? lh : lw;
+      height = isPortrait ? lw : lh;
 
       canvas.width = width;
       canvas.height = height;
+    }
+
+    function bitrateForOutput(w, h) {
+      const pixels = w * h;
+      if (pixels <= 1280 * 720) return 5_000_000;
+      if (pixels <= 1920 * 1080) return 12_000_000;
+      return 35_000_000;
+    }
+
+    function cameraConstraintsForPreset(preset) {
+      const [lw, lh] = landscapeSizeForPreset(preset);
+      return {
+        facingMode: "environment",
+        width: { ideal: lw },
+        height: { ideal: lh },
+        frameRate: { ideal: 30, max: 30 }
+      };
     }
 
     function setupWebGL() {
@@ -448,23 +489,40 @@
         throw new Error("WebCodecs VideoEncoder is not supported in this browser.");
       }
 
-      const codec = "avc1.42001f";
+      const codecCandidates = [
+        "avc1.640034",
+        "avc1.640033",
+        "avc1.640032",
+        "avc1.4d0028",
+        "avc1.42001f"
+      ];
 
-      const config = {
-        codec,
-        width,
-        height,
-        bitrate: width * height >= 1280 * 720 ? 5_000_000 : 2_000_000,
-        framerate: outputFps,
-        hardwareAcceleration: "prefer-hardware",
-        latencyMode: "quality",
-        avc: { format: "avc" }
-      };
+      const bitrate = bitrateForOutput(width, height);
+      let chosen = null;
 
-      const support = await VideoEncoder.isConfigSupported(config);
+      for (const codec of codecCandidates) {
+        const config = {
+          codec,
+          width,
+          height,
+          bitrate,
+          framerate: outputFps,
+          hardwareAcceleration: "prefer-hardware",
+          latencyMode: "quality",
+          avc: { format: "avc" }
+        };
 
-      if (!support.supported) {
-        throw new Error("H.264 WebCodecs encoding is not supported with this config.");
+        const support = await VideoEncoder.isConfigSupported(config);
+        if (support.supported) {
+          chosen = support.config;
+          break;
+        }
+      }
+
+      if (!chosen) {
+        throw new Error(
+          "H.264 WebCodecs encoding is not supported for this output size in this browser."
+        );
       }
 
       muxerTarget = new ArrayBufferTarget();
@@ -490,7 +548,7 @@
         }
       });
 
-      encoder.configure(config);
+      encoder.configure(chosen);
     }
 
     async function start() {
@@ -505,12 +563,7 @@
         statusText.textContent = "Starting camera...";
 
         cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "environment",
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: 30, max: 30 }
-          },
+          video: cameraConstraintsForPreset(outputPresetSelect.value),
           audio: false
         });
 
@@ -533,9 +586,10 @@
         startBtn.disabled = true;
         stopBtn.disabled = false;
         windowSecSelect.disabled = true;
+        outputPresetSelect.disabled = true;
 
         statusText.textContent =
-          `Recording GPU frames... output: ${width}x${height}`;
+          `Recording GPU frames... output: ${width}x${height} (camera ${video.videoWidth}×${video.videoHeight})`;
       } catch (error) {
         console.error(error);
         statusText.textContent = `Error: ${error.message}`;
@@ -613,6 +667,7 @@
       startBtn.disabled = false;
       stopBtn.disabled = true;
       windowSecSelect.disabled = false;
+      outputPresetSelect.disabled = false;
 
       if (resetStatus) {
         statusText.textContent = "Ready";
