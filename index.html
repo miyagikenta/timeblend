@@ -21,7 +21,7 @@
 
     <article aria-label="Recording controls">
       <header>
-        <h2>Recording</h2>
+        <h3>Recording</h3>
       </header>
       <div class="grid">
         <label for="windowSec">
@@ -49,6 +49,8 @@
             <option value="2160">4K (3840×2160)</option>
           </select>
         </label>
+      </div>
+      <div class="grid">
         <label for="facingMode">
           Camera facing
           <select id="facingMode">
@@ -58,7 +60,7 @@
         </label>
       </div>
       <small>縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート PC など背面カメラが無い場合は、Start 時に前面へ切り替わります。</small>
-      <div role="group">
+      <div class="grid" aria-label="Recording actions">
         <button type="button" id="startBtn">Start</button>
         <button type="button" id="stopBtn" class="secondary" disabled>Stop</button>
       </div>
@@ -67,7 +69,7 @@
 
     <article aria-label="Camera preview">
       <header>
-        <h2>Camera</h2>
+        <h3>Camera</h3>
       </header>
       <div class="stage">
         <video id="camera" autoplay playsinline muted></video>
@@ -76,7 +78,7 @@
 
     <article aria-label="Blended preview">
       <header>
-        <h2>Blended output</h2>
+        <h3>Blended output</h3>
       </header>
       <div class="stage">
         <canvas id="output"></canvas>
@@ -85,12 +87,14 @@
 
     <article aria-label="Encoded result">
       <header>
-        <h2>Result</h2>
+        <h3>Result</h3>
       </header>
       <div class="stage">
         <video id="result" controls playsinline></video>
       </div>
-      <a id="download" href="#" role="button" class="secondary outline" hidden>Download MP4</a>
+      <footer>
+        <a id="download" href="#" role="button" class="secondary outline" hidden>Download MP4</a>
+      </footer>
     </article>
   </main>
 

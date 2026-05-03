@@ -109,7 +109,7 @@ python3 -m http.server 8080
 
 ## UI / スタイル（方針）
 
-- **スタイルの正**は **Pico CSS（CDN）**。マークアップは **`main.container`・`<article>`（カード）・`<header>`・`grid`・`role="group"`** など Pico のセマンティクスに寄せる。
+- **スタイルの正**は **Pico CSS（CDN）**。マークアップは **`main.container`・`<article>`（カード）・`<header>` / `<footer>`・`grid`** など Pico のセマンティクスに寄せる。
 - **`app.css` は Pico だけでは足りない部分のみ**（現状は **`video` / `canvas` 用 `.stage`**＝黒ベタ・枠・角丸・はみ出し抑制）。全体の色・タイポ・フォーム・ボタンは Pico に任せる。
 - **候補の一覧・ティア・比較表はこのリポジトリの引き継ぎ資料には書かない**（チャット・個人メモ・issue など、必要な場所にだけ残す）。
 - **対象外の例**: Ant Design、MUI、Chakra など **UI＝フレームワーク前提**のライブラリ。
