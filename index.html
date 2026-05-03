@@ -48,8 +48,7 @@
       <option value="2160">4K (3840×2160)</option>
     </select>
   </label>
-  <p class="small">縦持ちカメラでは長辺に合わせて 720×1280 / 1080×1920 / 2160×3840 になります。</p>
-  <p class="small">Start 時にカメラの getCapabilities() で幅・高さの上限を読み、この端末で扱えないプリセットは無効化されます。</p>
+  <p class="small">縦持ちでは 720×1280 / 1080×1920 / 2160×3840。</p>
 
   <br />
 
@@ -71,7 +70,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.6.7-output-preset-capabilities";
+    const VERSION = "v0.6.9-ui-trim";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -399,6 +398,24 @@
       }
     }
 
+    function syncPresetsFromTrack(track) {
+      syncOutputPresetOptionsWithCapabilities(track);
+      ensureValidOutputPresetSelection();
+    }
+
+    async function applyPresetConstraintsToVideoTrack(videoTrack) {
+      try {
+        await videoTrack.applyConstraints(
+          cameraConstraintsForPreset(outputPresetSelect.value)
+        );
+      } catch (constraintError) {
+        console.warn(constraintError);
+        outputPresetSelect.value = "720";
+        ensureValidOutputPresetSelection();
+        await videoTrack.applyConstraints(cameraConstraintsForPreset("720"));
+      }
+    }
+
     function stopSampleLoop() {
       if (sampleRvfHandle !== null && typeof video.cancelVideoFrameCallback === "function") {
         video.cancelVideoFrameCallback(sampleRvfHandle);
@@ -708,19 +725,8 @@
         });
 
         const [videoTrack] = cameraStream.getVideoTracks();
-        syncOutputPresetOptionsWithCapabilities(videoTrack);
-        ensureValidOutputPresetSelection();
-
-        try {
-          await videoTrack.applyConstraints(
-            cameraConstraintsForPreset(outputPresetSelect.value)
-          );
-        } catch (constraintError) {
-          console.warn(constraintError);
-          outputPresetSelect.value = "720";
-          ensureValidOutputPresetSelection();
-          await videoTrack.applyConstraints(cameraConstraintsForPreset("720"));
-        }
+        syncPresetsFromTrack(videoTrack);
+        await applyPresetConstraintsToVideoTrack(videoTrack);
 
         video.srcObject = cameraStream;
         await video.play();
