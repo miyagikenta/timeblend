@@ -1,94 +1,64 @@
 # timeblend
 
-A timelapse generator that blends time instead of skipping it.
+A browser demo that builds a timelapse-like clip by **temporal averaging** (blending frames over a time window) instead of only dropping frames.
 
 ## Overview
 
-timeblend is a web-based timelapse generator that captures frames from your camera stream and blends them over time.
-
-Unlike traditional timelapse techniques that simply drop frames, timeblend performs **temporal averaging** — combining multiple frames into one.
-
-This results in:
-
-- smoother motion
-- reduced flicker
-- natural motion blur-like effects
-- unique "time melting" visuals
+The camera stream is accumulated on the GPU, averaged over a configurable window, encoded to **H.264**, and muxed to **MP4** in the browser.
 
 ## How it works
 
-Instead of:
+Instead of “keep one frame every *N* seconds”, timeblend does:
 
-> pick 1 frame every N seconds
+> sample the live stream → add frames in a GPU buffer → divide by count → emit one output frame per window
 
-timeblend does:
+## Features
 
-> accumulate multiple frames over time → average → output 1 frame
+- Live camera capture (`getUserMedia`)
+- WebGL2 accumulation (`EXT_color_buffer_float` required)
+- Adjustable **average window** (1 s–60 min)
+- **Output resolution** presets (720p / 1080p / 4K, portrait swap for tall framing)
+- Presets are checked against `MediaStreamTrack.getCapabilities()` after the camera opens; **Start is aborted** if the chosen preset is not supported or `applyConstraints` fails (the UI selection is not silently changed)
+- MP4 download and in-page playback (`WebCodecs` + [mp4-muxer](https://github.com/Vanilagy/mp4-muxer) via CDN)
 
+## Tech stack
+
+- MediaDevices / `getUserMedia`
+- WebGL2 (float accumulation, ping-pong textures)
+- WebCodecs `VideoEncoder` (H.264; codec string chosen with `isConfigSupported`)
+- `Canvas` + `VideoFrame` for encoder input
+- `requestVideoFrameCallback` for sampling when available (falls back to `setInterval`)
+
+## Requirements
+
+- A recent desktop **Chrome** or **Edge** is the most reliable target (WebGL2 + WebCodecs + float render targets).
+- **HTTPS or localhost** for camera access in real deployments.
+
+## Run locally
+
+There is **no npm install** or bundler. Serve the folder over HTTP (modules may fail on `file://`):
+
+```bash
+cd timeblend
+python3 -m http.server 8080
 ```
 
-input: 30fps stream for 10 seconds → 300 frames
-process: temporal accumulation
-output: 1 blended frame
+Open `http://localhost:8080/` and allow the camera.
 
-````
+## Repository layout
 
-## Features (MVP)
+| File | Role |
+|------|------|
+| `index.html` | Page structure |
+| `app.css` | Styles |
+| `app.js` | Application logic (`type="module"`) |
 
-- Real-time camera capture (via `getUserMedia`)
-- Temporal frame accumulation
-- Adjustable averaging window (e.g. 1s / 5s / 10s)
-- Live preview
-- Video recording (WebM)
-- Download generated timelapse
-
-## Why this exists
-
-Most timelapse tools are based on frame skipping.
-
-This creates:
-- jittery motion
-- flickering exposure
-- unnatural transitions
-
-timeblend explores a different approach:
-
-> **What if we compress time by blending it instead of skipping it?**
-
-## Tech Stack
-
-- Web APIs
-  - MediaDevices (camera)
-  - Canvas API
-  - MediaRecorder
-- (Optional future)
-  - WebGL / WebGPU for acceleration
-  - WebCodecs for encoding
+More context (Japanese): [`docs/handoff_ja.md`](docs/handoff_ja.md).
 
 ## Limitations
 
-- Performance depends on device (especially mobile Safari)
-- Long recordings may cause memory or thermal issues
-- Currently optimized for short to mid-length captures
-
-## Roadmap
-
-- GPU acceleration (WebGL / WebGPU)
-- Multiple blend modes (average / max / median / EMA)
-- MP4 export support
-- Better mobile stability
-- YouTube upload integration (optional future)
-
-## Getting Started
-
-```bash
-git clone https://github.com/yourname/timeblend
-cd timeblend
-npm install
-npm run dev
-````
-
-Then open in your browser and allow camera access.
+- Heavy at 4K; long runs depend on thermals, memory, and encoder throughput.
+- Long average windows rely on timers; background tabs may throttle timers.
 
 ## License
 
