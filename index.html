@@ -70,7 +70,7 @@
   <script type="module">
     import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-    const VERSION = "v0.6.9-ui-trim";
+    const VERSION = "v0.6.10-preset-start-abort";
 
     document.getElementById("version").textContent =
       `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -375,45 +375,22 @@
       }
     }
 
-    function ensureValidOutputPresetSelection() {
-      const sel = outputPresetSelect;
-      const cur = sel.options[sel.selectedIndex];
-      if (cur && !cur.disabled) return;
-
-      for (const value of ["2160", "1080", "720"]) {
-        const o = [...sel.options].find(x => x.value === value && !x.disabled);
-        if (o) {
-          sel.value = value;
-          return;
-        }
-      }
-
-      const any = [...sel.options].find(x => !x.disabled);
-      if (any) sel.value = any.value;
-    }
-
     function resetOutputPresetOptionsEnabled() {
       for (const opt of outputPresetSelect.options) {
         opt.disabled = false;
       }
     }
 
-    function syncPresetsFromTrack(track) {
-      syncOutputPresetOptionsWithCapabilities(track);
-      ensureValidOutputPresetSelection();
+    function isOutputPresetSelectionAllowed() {
+      const sel = outputPresetSelect;
+      const cur = sel.options[sel.selectedIndex];
+      return Boolean(cur && !cur.disabled);
     }
 
     async function applyPresetConstraintsToVideoTrack(videoTrack) {
-      try {
-        await videoTrack.applyConstraints(
-          cameraConstraintsForPreset(outputPresetSelect.value)
-        );
-      } catch (constraintError) {
-        console.warn(constraintError);
-        outputPresetSelect.value = "720";
-        ensureValidOutputPresetSelection();
-        await videoTrack.applyConstraints(cameraConstraintsForPreset("720"));
-      }
+      await videoTrack.applyConstraints(
+        cameraConstraintsForPreset(outputPresetSelect.value)
+      );
     }
 
     function stopSampleLoop() {
@@ -725,8 +702,28 @@
         });
 
         const [videoTrack] = cameraStream.getVideoTracks();
-        syncPresetsFromTrack(videoTrack);
-        await applyPresetConstraintsToVideoTrack(videoTrack);
+        syncOutputPresetOptionsWithCapabilities(videoTrack);
+
+        if (!isOutputPresetSelectionAllowed()) {
+          const label =
+            outputPresetSelect.selectedOptions[0]?.textContent?.trim() ??
+            "選択中の解像度";
+          cameraStream.getTracks().forEach(t => t.stop());
+          cameraStream = null;
+          statusText.textContent = `${label} はこのカメラでは使えません。プルダウンを変更してから再度 Start してください。`;
+          return;
+        }
+
+        try {
+          await applyPresetConstraintsToVideoTrack(videoTrack);
+        } catch (constraintError) {
+          console.warn(constraintError);
+          cameraStream.getTracks().forEach(t => t.stop());
+          cameraStream = null;
+          statusText.textContent =
+            "選択中の解像度にカメラを合わせられませんでした。別の行を選んでから再度 Start してください。";
+          return;
+        }
 
         video.srcObject = cameraStream;
         await video.play();
