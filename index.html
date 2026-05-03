@@ -21,55 +21,55 @@
 
     <article aria-label="Recording controls">
       <header>
-        <h3>Recording</h3>
+        <h2>Recording</h2>
       </header>
-      <div class="grid">
-        <label for="windowSec">
-          Average window
-          <select id="windowSec">
-            <option value="1">1 sec</option>
-            <option value="3" selected>3 sec</option>
-            <option value="5">5 sec</option>
-            <option value="10">10 sec</option>
-            <option value="30">30 sec</option>
-            <option value="60">60 sec</option>
-            <option value="120">2 min</option>
-            <option value="300">5 min</option>
-            <option value="600">10 min</option>
-            <option value="900">15 min</option>
-            <option value="1800">30 min</option>
-            <option value="3600">60 min</option>
-          </select>
-        </label>
-        <label for="outputPreset">
-          Output resolution
-          <select id="outputPreset">
-            <option value="720">720p (1280×720)</option>
-            <option value="1080" selected>1080p (1920×1080)</option>
-            <option value="2160">4K (3840×2160)</option>
-          </select>
-        </label>
-      </div>
-      <div class="grid">
-        <label for="facingMode">
-          Camera facing
-          <select id="facingMode">
-            <option value="environment" selected>Back (environment)</option>
-            <option value="user">Front (user)</option>
-          </select>
-        </label>
-      </div>
-      <small>縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート PC など背面カメラが無い場合は、Start 時に前面へ切り替わります。</small>
-      <div class="grid" aria-label="Recording actions">
-        <button type="button" id="startBtn">Start</button>
-        <button type="button" id="stopBtn" class="secondary" disabled>Stop</button>
-      </div>
-      <p id="status" role="status" aria-live="polite">Ready</p>
+      <form aria-label="Recording settings">
+        <div class="grid">
+          <label for="windowSec">
+            Average window
+            <select id="windowSec">
+              <option value="1">1 sec</option>
+              <option value="3" selected>3 sec</option>
+              <option value="5">5 sec</option>
+              <option value="10">10 sec</option>
+              <option value="30">30 sec</option>
+              <option value="60">60 sec</option>
+              <option value="120">2 min</option>
+              <option value="300">5 min</option>
+              <option value="600">10 min</option>
+              <option value="900">15 min</option>
+              <option value="1800">30 min</option>
+              <option value="3600">60 min</option>
+            </select>
+          </label>
+          <label for="outputPreset">
+            Output resolution
+            <select id="outputPreset">
+              <option value="720">720p (1280×720)</option>
+              <option value="1080" selected>1080p (1920×1080)</option>
+              <option value="2160">4K (3840×2160)</option>
+            </select>
+          </label>
+          <label for="facingMode">
+            Camera facing
+            <select id="facingMode">
+              <option value="environment" selected>Back (environment)</option>
+              <option value="user">Front (user)</option>
+            </select>
+          </label>
+        </div>
+        <small>縦持ちでは 720×1280 / 1080×1920 / 2160×3840。ノート PC など背面カメラが無い場合は、Start 時に前面へ切り替わります。</small>
+        <div class="grid" aria-label="Recording actions">
+          <button type="button" id="startBtn">Start</button>
+          <button type="button" id="stopBtn" class="secondary" disabled>Stop</button>
+        </div>
+        <p id="status" role="status" aria-live="polite">Ready</p>
+      </form>
     </article>
 
     <article aria-label="Camera preview">
       <header>
-        <h3>Camera</h3>
+        <h2>Camera</h2>
       </header>
       <div class="stage">
         <video id="camera" autoplay playsinline muted></video>
@@ -78,7 +78,7 @@
 
     <article aria-label="Blended preview">
       <header>
-        <h3>Blended output</h3>
+        <h2>Blended output</h2>
       </header>
       <div class="stage">
         <canvas id="output"></canvas>
@@ -87,7 +87,7 @@
 
     <article aria-label="Encoded result">
       <header>
-        <h3>Result</h3>
+        <h2>Result</h2>
       </header>
       <div class="stage">
         <video id="result" controls playsinline></video>
