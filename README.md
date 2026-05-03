@@ -34,6 +34,10 @@ Instead of “keep one frame every *N* seconds”, timeblend does:
 - A recent desktop **Chrome** or **Edge** is the most reliable target (WebGL2 + WebCodecs + float render targets).
 - **HTTPS or localhost** for camera access in real deployments.
 
+## Privacy
+
+Processing is **entirely in the browser**: the camera stream is not uploaded to a server by this app (there is no backend in this repo). The page loads **[mp4-muxer](https://github.com/Vanilagy/mp4-muxer)** from **esm.sh** as an ES module; review that dependency if your threat model requires it.
+
 ## Run locally
 
 There is **no npm install** or bundler. Serve the folder over HTTP (modules may fail on `file://`):
@@ -53,12 +57,14 @@ Open `http://localhost:8080/` and allow the camera.
 | `app.css` | Styles |
 | `app.js` | Application logic (`type="module"`) |
 
-More context (Japanese): [`docs/handoff_ja.md`](docs/handoff_ja.md).
+More context (Japanese, includes a **cold-start / resume checklist** and a **code map**): [`docs/handoff_ja.md`](docs/handoff_ja.md).
 
 ## Limitations
 
 - Heavy at 4K; long runs depend on thermals, memory, and encoder throughput.
+- The muxer holds the **full MP4 in memory** until finalize; very long recordings can **grow RAM usage** and may crash the tab.
 - Long average windows rely on timers; background tabs may throttle timers.
+- **Safari / Firefox** may lack pieces of WebCodecs or float render targets; treat Chrome/Edge as the supported demo target unless you verify otherwise.
 
 ## License
 
