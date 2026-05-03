@@ -198,7 +198,6 @@
       font-size: 0.85rem;
       color: var(--text-muted);
       background: var(--bg);
-      border-radius: var(--radius-sm);
       border-left: 3px solid var(--accent-dim);
       min-height: 2.75rem;
     }
