@@ -48,7 +48,7 @@ let muxerTarget = null;
 let isRecording = false;
 let hasConsent = false;
 
-const CONSENT_KEY = "timeblend.consent.v1";
+const CONSENT_KEY = "lumetriq-lapse.consent.v1";
 
 /** Revoked when starting a new recording or in cleanup (blob URL leak prevention). */
 let lastMp4ObjectUrl = null;
@@ -843,7 +843,7 @@ async function stop() {
         resultVideo.src = url;
 
         downloadLink.href = url;
-    downloadLink.download = "timeblend.mp4";
+    downloadLink.download = "lumetriq-lapse.mp4";
     downloadLink.textContent = "Download MP4";
         downloadLink.hidden = false;
 

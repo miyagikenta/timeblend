@@ -1,8 +1,8 @@
-# timeblend
+# lumetriq-lapse
 
 時間平均型タイムラプスのプロトタイプ。
 
-**Repository:** [github.com/lumetriq-labs/timeblend](https://github.com/lumetriq-labs/timeblend)
+**Repository:** [github.com/lumetriq-labs/lumetriq-lapse](https://github.com/lumetriq-labs/lumetriq-lapse)
 
 ## Overview
 
@@ -10,7 +10,7 @@ The camera stream is accumulated on the GPU, averaged over a configurable window
 
 ## How it works
 
-Instead of “keep one frame every *N* seconds”, timeblend does:
+Instead of “keep one frame every *N* seconds”, lumetriq-lapse does:
 
 > sample the live stream → add frames in a GPU buffer → divide by count → emit one output frame per window
 
@@ -48,7 +48,7 @@ Processing is **entirely in the browser**: the camera stream is not uploaded to 
 There is **no npm install** or bundler. Serve the folder over HTTP (modules may fail on `file://`):
 
 ```bash
-cd timeblend
+cd lumetriq-lapse
 python3 -m http.server 8080
 ```
 

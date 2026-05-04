@@ -1,4 +1,4 @@
-# Timeblend — 引き継ぎ・仕様メモ（日本語）
+# Lumetriq-lapse — 引き継ぎ・仕様メモ（日本語）
 
 ## この資料の役割
 
@@ -31,8 +31,8 @@
 
 ## リポジトリの所在（GitHub）
 
-- **正**: `https://github.com/lumetriq-labs/timeblend`
-- **移管**: 旧 `miyagikenta/timeblend` から GitHub の **Transfer ownership** で `lumetriq-labs` へ移した。旧 URL はしばらくリダイレクトされることが多いが、**ブックマーク・クローン元・`git remote` は新 URL に寄せる**のが安全。
+- **正**: `https://github.com/lumetriq-labs/lumetriq-lapse`
+- **移管**: 旧 `miyagikenta/timeblend` から GitHub の **Transfer ownership** で `lumetriq-labs` へ移し、その後 `lumetriq-lapse` にリネームした。旧 URL はしばらくリダイレクトされることが多いが、**ブックマーク・クローン元・`git remote` は新 URL に寄せる**のが安全。
 - **GitHub Pages 等**: デモを Pages に載せていた場合、**Org 配下リポジトリの Settings → Pages** が有効か・公開ブランチ/ディレクトリが意図どおりかを再確認する。
 
 ---
@@ -42,7 +42,7 @@
 `file://` ではモジュール import が失敗しやすい。**必ず HTTP(S)** で `index.html` を開く。
 
 ```bash
-cd timeblend
+cd lumetriq-lapse
 python3 -m http.server 8080
 ```
 
@@ -92,7 +92,7 @@ python3 -m http.server 8080
 
 ## コアコンセプト
 
-| 従来のタイムラプス | Timeblend |
+| 従来のタイムラプス | Lumetriq-lapse |
 |-------------------|-----------|
 | フレーム間引き → カクつきやすい | 一定窓内のフレームを加算し平均 → 滑らかさ・流れを強調 |
 
@@ -130,7 +130,7 @@ python3 -m http.server 8080
 - MP4 ダウンロード・結果 `<video>` 再生
 - 録画中は平均窓・解像度セレクト無効化
 - **Camera facing への自動フォールバックはしない**（背面が開けない／解像度制約に失敗した場合は、ユーザーに **Camera facing / Output resolution** の変更を促して再試行させる）
-- 初回利用時は **同意モーダル**で Privacy / Terms の確認と同意が必須。`localStorage` の `timeblend.consent.v1` に同意状態を保存する
+- 初回利用時は **同意モーダル**で Privacy / Terms の確認と同意が必須。`localStorage` の `lumetriq-lapse.consent.v1` に同意状態を保存する
 - **サンプリング**: `requestVideoFrameCallback` 優先、未対応は `setInterval`（100ms）
 - **WebGL**: uniform のキャッシュ、`cleanup` から `teardownWebGL` でリソース解放（`gl.finish` は削除済み）
 - **音声なし**: 録画・MP4 は **映像トラックのみ**（`getUserMedia` で `audio: false`）。
