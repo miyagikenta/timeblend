@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.8.2-no-auto-facing";
+const VERSION = "v0.8.2";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
