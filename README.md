@@ -1,6 +1,6 @@
 # timeblend
 
-A browser demo that builds a timelapse-like clip by **temporal averaging** (blending frames over a time window) instead of only dropping frames.
+時間平均型タイムラプスのプロトタイプ。
 
 **Repository:** [github.com/lumetriq-labs/timeblend](https://github.com/lumetriq-labs/timeblend)
 
