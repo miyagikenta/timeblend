@@ -57,6 +57,14 @@
               <option value="user">Front (user)</option>
             </select>
           </label>
+          <label for="lowLightMode">
+            Low light handling
+            <select id="lowLightMode">
+              <option value="none" selected>None</option>
+              <option value="pause">Pause output when too dark</option>
+              <option value="correct">Brightness / contrast correction</option>
+            </select>
+          </label>
         </div>
         <div class="grid" aria-label="Recording actions">
           <button type="button" id="startBtn" disabled>Start</button>

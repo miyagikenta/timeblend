@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.8.2";
+const VERSION = "v0.9.0";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -12,6 +12,7 @@ const stopBtn = document.getElementById("stopBtn");
 const windowSecSelect = document.getElementById("windowSec");
 const outputPresetSelect = document.getElementById("outputPreset");
 const facingModeSelect = document.getElementById("facingMode");
+const lowLightModeSelect = document.getElementById("lowLightMode");
 const consentModal = document.getElementById("consentModal");
 const consentModalCheck = document.getElementById("consentModalCheck");
 const consentAcceptBtn = document.getElementById("consentAcceptBtn");
@@ -29,6 +30,25 @@ let height = 720;
 const sampleIntervalMs = 100;
 const outputFps = 30;
 const frameDurationUs = Math.round(1_000_000 / outputFps);
+
+const LOW_LIGHT_LUMA_PAUSE = 0.08;
+const LOW_LIGHT_LUMA_RESUME = 0.14;
+const LOW_LIGHT_LUMA_CORRECT = 0.18;
+const LOW_LIGHT_TARGET_LUMA = 0.38;
+const LOW_LIGHT_LUMA_EMA = 0.2;
+const LOW_LIGHT_TONE_GAIN_EMA = 0.2;
+const LOW_LIGHT_RESUME_BRIGHT_SAMPLES = 15;
+
+const lumaCanvas = document.createElement("canvas");
+lumaCanvas.width = 32;
+lumaCanvas.height = 32;
+const lumaCtx = lumaCanvas.getContext("2d", { willReadFrequently: true });
+
+let smoothedLuma = 0.5;
+let darkOutputPaused = false;
+let brightStreak = 0;
+let toneGain = 1;
+let toneBlackPoint = 0;
 
 let cameraStream = null;
 let sampleTimer = null;
@@ -61,6 +81,8 @@ let locAccumVideo = null;
 let locAccumPrev = null;
 let locDisplayAccum = null;
 let locDisplayCount = null;
+let locDisplayToneGain = null;
+let locDisplayBlackPoint = null;
 
 const vertexShaderSource = `#version 300 es
   in vec2 a_position;
@@ -99,13 +121,91 @@ const displayFragmentShaderSource = `#version 300 es
 
   uniform sampler2D u_accum;
   uniform float u_count;
+  uniform float u_toneGain;
+  uniform float u_toneBlackPoint;
 
   void main() {
     vec4 accumulated = texture(u_accum, v_uv);
     vec3 averageColor = accumulated.rgb / max(u_count, 1.0);
+    if (u_toneGain > 1.001) {
+      averageColor = clamp((averageColor - vec3(u_toneBlackPoint)) * u_toneGain, 0.0, 1.0);
+    }
     outColor = vec4(averageColor, 1.0);
   }
 `;
+
+function getLowLightMode() {
+  return lowLightModeSelect?.value ?? "none";
+}
+
+function resetLowLightState() {
+  smoothedLuma = 0.5;
+  darkOutputPaused = false;
+  brightStreak = 0;
+  toneGain = 1;
+  toneBlackPoint = 0;
+}
+
+function measureVideoLuma() {
+  if (!video.videoWidth || !video.videoHeight) return null;
+
+  lumaCtx.drawImage(video, 0, 0, lumaCanvas.width, lumaCanvas.height);
+  const data = lumaCtx.getImageData(0, 0, lumaCanvas.width, lumaCanvas.height).data;
+  let sum = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    sum += data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+  }
+
+  return sum / (data.length / 4) / 255;
+}
+
+function updateSmoothedLuma() {
+  const raw = measureVideoLuma();
+  if (raw === null) return null;
+
+  smoothedLuma = smoothedLuma * (1 - LOW_LIGHT_LUMA_EMA) + raw * LOW_LIGHT_LUMA_EMA;
+  return smoothedLuma;
+}
+
+function updateDarkPauseState(luma) {
+  if (getLowLightMode() !== "pause") {
+    darkOutputPaused = false;
+    brightStreak = 0;
+    return;
+  }
+
+  if (luma < LOW_LIGHT_LUMA_PAUSE) {
+    darkOutputPaused = true;
+    brightStreak = 0;
+    return;
+  }
+
+  if (luma >= LOW_LIGHT_LUMA_RESUME) {
+    brightStreak += 1;
+    if (brightStreak >= LOW_LIGHT_RESUME_BRIGHT_SAMPLES) {
+      darkOutputPaused = false;
+    }
+    return;
+  }
+
+  brightStreak = 0;
+}
+
+function updateToneCorrection(luma) {
+  if (getLowLightMode() !== "correct" || luma >= LOW_LIGHT_LUMA_CORRECT) {
+    toneGain = 1;
+    toneBlackPoint = 0;
+    return;
+  }
+
+  const desiredGain = Math.min(
+    8,
+    Math.max(1, LOW_LIGHT_TARGET_LUMA / Math.max(luma, 0.03))
+  );
+  toneGain = toneGain * (1 - LOW_LIGHT_TONE_GAIN_EMA) + desiredGain * LOW_LIGHT_TONE_GAIN_EMA;
+  toneBlackPoint = luma < 0.12 ? 0.02 : 0;
+}
 
 function createShader(gl, type, source) {
   const shader = gl.createShader(type);
@@ -479,6 +579,8 @@ function teardownWebGL() {
   locAccumPrev = null;
   locDisplayAccum = null;
   locDisplayCount = null;
+  locDisplayToneGain = null;
+  locDisplayBlackPoint = null;
 
   for (const fb of framebuffers) {
     if (fb) gl.deleteFramebuffer(fb);
@@ -535,6 +637,8 @@ function setupWebGL() {
   locAccumPrev = gl.getUniformLocation(accumulateProgram, "u_prevAccum");
   locDisplayAccum = gl.getUniformLocation(displayProgram, "u_accum");
   locDisplayCount = gl.getUniformLocation(displayProgram, "u_count");
+  locDisplayToneGain = gl.getUniformLocation(displayProgram, "u_toneGain");
+  locDisplayBlackPoint = gl.getUniformLocation(displayProgram, "u_toneBlackPoint");
 
   quadVao = setupQuad(gl);
   videoTexture = createVideoTexture(gl);
@@ -583,6 +687,14 @@ function updateVideoTexture() {
 function accumulateFrameGpu() {
   if (!isRecording || !video.videoWidth || !video.videoHeight) return;
 
+  const luma = updateSmoothedLuma();
+  if (luma !== null) {
+    updateDarkPauseState(luma);
+    if (getLowLightMode() === "pause" && darkOutputPaused) {
+      return;
+    }
+  }
+
   try {
     updateVideoTexture();
 
@@ -626,6 +738,8 @@ function renderAverageToCanvas() {
   gl.bindTexture(gl.TEXTURE_2D, accumTextures[ping]);
   gl.uniform1i(locDisplayAccum, 0);
   gl.uniform1f(locDisplayCount, sampleCount);
+  gl.uniform1f(locDisplayToneGain, toneGain);
+  gl.uniform1f(locDisplayBlackPoint, toneBlackPoint);
 
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -634,6 +748,20 @@ function renderAverageToCanvas() {
 
 function emitAverageFrame() {
   if (!isRecording || !encoder || sampleCount === 0) return;
+
+  const luma = smoothedLuma;
+  const mode = getLowLightMode();
+
+  if (mode === "pause" && darkOutputPaused) {
+    clearAccumulation();
+    statusText.textContent =
+      `Output paused (too dark, brightness ${(luma * 100).toFixed(0)}%)...`;
+    return;
+  }
+
+  if (luma !== null && !Number.isNaN(luma)) {
+    updateToneCorrection(luma);
+  }
 
   const rendered = renderAverageToCanvas();
   if (!rendered) return;
@@ -782,6 +910,7 @@ async function start() {
     await setupEncoder();
 
     isRecording = true;
+    resetLowLightState();
 
     const averageWindowMs = Number(windowSecSelect.value) * 1000;
 
@@ -793,6 +922,7 @@ async function start() {
     windowSecSelect.disabled = true;
     outputPresetSelect.disabled = true;
     facingModeSelect.disabled = true;
+    if (lowLightModeSelect) lowLightModeSelect.disabled = true;
 
     statusText.textContent =
       `Recording GPU frames... output: ${width}x${height} (camera ${video.videoWidth}×${video.videoHeight})`;
@@ -877,7 +1007,9 @@ function cleanup(resetStatus = true) {
   windowSecSelect.disabled = false;
   outputPresetSelect.disabled = false;
   facingModeSelect.disabled = false;
+  if (lowLightModeSelect) lowLightModeSelect.disabled = false;
   resetOutputPresetOptionsEnabled();
+  resetLowLightState();
 
   if (resetStatus) {
     statusText.textContent = hasConsent
