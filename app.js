@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.9.0";
+const VERSION = "v0.9.4";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -31,18 +31,14 @@ const sampleIntervalMs = 100;
 const outputFps = 30;
 const frameDurationUs = Math.round(1_000_000 / outputFps);
 
-const LOW_LIGHT_LUMA_PAUSE = 0.08;
-const LOW_LIGHT_LUMA_RESUME = 0.14;
-const LOW_LIGHT_LUMA_CORRECT = 0.18;
+const LOW_LIGHT_LUMA_PAUSE = 0.20;
+const LOW_LIGHT_LUMA_RESUME = 0.25;
+const LOW_LIGHT_LUMA_CORRECT = 0.20;
 const LOW_LIGHT_TARGET_LUMA = 0.38;
 const LOW_LIGHT_LUMA_EMA = 0.2;
 const LOW_LIGHT_TONE_GAIN_EMA = 0.2;
 const LOW_LIGHT_RESUME_BRIGHT_SAMPLES = 15;
-
-const lumaCanvas = document.createElement("canvas");
-lumaCanvas.width = 32;
-lumaCanvas.height = 32;
-const lumaCtx = lumaCanvas.getContext("2d", { willReadFrequently: true });
+const LUMA_PROBE_SIZE = 32;
 
 let smoothedLuma = 0.5;
 let darkOutputPaused = false;
@@ -75,6 +71,7 @@ let lastMp4ObjectUrl = null;
 
 let accumulateProgram = null;
 let displayProgram = null;
+let lumaProgram = null;
 let quadVao = null;
 
 let locAccumVideo = null;
@@ -83,6 +80,11 @@ let locDisplayAccum = null;
 let locDisplayCount = null;
 let locDisplayToneGain = null;
 let locDisplayBlackPoint = null;
+let locLumaVideo = null;
+
+let lumaTexture = null;
+let lumaFramebuffer = null;
+let lumaPixels = null;
 
 const vertexShaderSource = `#version 300 es
   in vec2 a_position;
@@ -134,6 +136,20 @@ const displayFragmentShaderSource = `#version 300 es
   }
 `;
 
+const lumaDownsampleFragmentShaderSource = `#version 300 es
+  precision highp float;
+
+  in vec2 v_uv;
+  out vec4 outColor;
+
+  uniform sampler2D u_video;
+
+  void main() {
+    vec2 videoUv = vec2(v_uv.x, 1.0 - v_uv.y);
+    outColor = texture(u_video, videoUv);
+  }
+`;
+
 function getLowLightMode() {
   return lowLightModeSelect?.value ?? "none";
 }
@@ -146,22 +162,71 @@ function resetLowLightState() {
   toneBlackPoint = 0;
 }
 
-function measureVideoLuma() {
-  if (!video.videoWidth || !video.videoHeight) return null;
+function createByteTexture(gl, textureWidth, textureHeight) {
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
 
-  lumaCtx.drawImage(video, 0, 0, lumaCanvas.width, lumaCanvas.height);
-  const data = lumaCtx.getImageData(0, 0, lumaCanvas.width, lumaCanvas.height).data;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    textureWidth,
+    textureHeight,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    null
+  );
+
+  return texture;
+}
+
+function measureVideoLumaGpu() {
+  if (!gl || !videoTexture) return null;
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, lumaFramebuffer);
+  gl.viewport(0, 0, LUMA_PROBE_SIZE, LUMA_PROBE_SIZE);
+
+  gl.useProgram(lumaProgram);
+  gl.bindVertexArray(quadVao);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+  gl.uniform1i(locLumaVideo, 0);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.readPixels(
+    0,
+    0,
+    LUMA_PROBE_SIZE,
+    LUMA_PROBE_SIZE,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    lumaPixels
+  );
+
   let sum = 0;
+  const pixelCount = LUMA_PROBE_SIZE * LUMA_PROBE_SIZE;
 
-  for (let i = 0; i < data.length; i += 4) {
-    sum += data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+  for (let i = 0; i < pixelCount; i += 1) {
+    const offset = i * 4;
+    sum +=
+      lumaPixels[offset] * 0.299 +
+      lumaPixels[offset + 1] * 0.587 +
+      lumaPixels[offset + 2] * 0.114;
   }
 
-  return sum / (data.length / 4) / 255;
+  return sum / pixelCount / 255;
 }
 
 function updateSmoothedLuma() {
-  const raw = measureVideoLuma();
+  const raw = measureVideoLumaGpu();
   if (raw === null) return null;
 
   smoothedLuma = smoothedLuma * (1 - LOW_LIGHT_LUMA_EMA) + raw * LOW_LIGHT_LUMA_EMA;
@@ -572,8 +637,10 @@ function teardownWebGL() {
 
   if (accumulateProgram) gl.deleteProgram(accumulateProgram);
   if (displayProgram) gl.deleteProgram(displayProgram);
+  if (lumaProgram) gl.deleteProgram(lumaProgram);
   accumulateProgram = null;
   displayProgram = null;
+  lumaProgram = null;
 
   locAccumVideo = null;
   locAccumPrev = null;
@@ -581,6 +648,7 @@ function teardownWebGL() {
   locDisplayCount = null;
   locDisplayToneGain = null;
   locDisplayBlackPoint = null;
+  locLumaVideo = null;
 
   for (const fb of framebuffers) {
     if (fb) gl.deleteFramebuffer(fb);
@@ -594,6 +662,14 @@ function teardownWebGL() {
 
   if (videoTexture) gl.deleteTexture(videoTexture);
   videoTexture = null;
+
+  if (lumaFramebuffer) gl.deleteFramebuffer(lumaFramebuffer);
+  lumaFramebuffer = null;
+
+  if (lumaTexture) gl.deleteTexture(lumaTexture);
+  lumaTexture = null;
+
+  lumaPixels = null;
 
   if (quadVao) gl.deleteVertexArray(quadVao);
   quadVao = null;
@@ -633,15 +709,26 @@ function setupWebGL() {
     displayFragmentShaderSource
   );
 
+  lumaProgram = createProgram(
+    gl,
+    vertexShaderSource,
+    lumaDownsampleFragmentShaderSource
+  );
+
   locAccumVideo = gl.getUniformLocation(accumulateProgram, "u_video");
   locAccumPrev = gl.getUniformLocation(accumulateProgram, "u_prevAccum");
   locDisplayAccum = gl.getUniformLocation(displayProgram, "u_accum");
   locDisplayCount = gl.getUniformLocation(displayProgram, "u_count");
   locDisplayToneGain = gl.getUniformLocation(displayProgram, "u_toneGain");
   locDisplayBlackPoint = gl.getUniformLocation(displayProgram, "u_toneBlackPoint");
+  locLumaVideo = gl.getUniformLocation(lumaProgram, "u_video");
 
   quadVao = setupQuad(gl);
   videoTexture = createVideoTexture(gl);
+
+  lumaTexture = createByteTexture(gl, LUMA_PROBE_SIZE, LUMA_PROBE_SIZE);
+  lumaFramebuffer = createFramebuffer(gl, lumaTexture);
+  lumaPixels = new Uint8Array(LUMA_PROBE_SIZE * LUMA_PROBE_SIZE * 4);
 
   accumTextures = [
     createFloatTexture(gl, width, height),
@@ -687,16 +774,18 @@ function updateVideoTexture() {
 function accumulateFrameGpu() {
   if (!isRecording || !video.videoWidth || !video.videoHeight) return;
 
-  const luma = updateSmoothedLuma();
-  if (luma !== null) {
-    updateDarkPauseState(luma);
-    if (getLowLightMode() === "pause" && darkOutputPaused) {
-      return;
-    }
-  }
-
   try {
     updateVideoTexture();
+
+    if (getLowLightMode() !== "none") {
+      const luma = updateSmoothedLuma();
+      if (luma !== null) {
+        updateDarkPauseState(luma);
+        if (getLowLightMode() === "pause" && darkOutputPaused) {
+          return;
+        }
+      }
+    }
 
     const prevIndex = ping;
     const nextIndex = 1 - ping;
