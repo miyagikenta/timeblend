@@ -1,6 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "https://esm.sh/mp4-muxer@5.2.2";
 
-const VERSION = "v0.9.4";
+const VERSION = "v0.9.5";
 
 document.getElementById("version").textContent =
   `Version: ${VERSION} / loaded: ${new Date().toLocaleString()}`;
@@ -19,6 +19,7 @@ const consentAcceptBtn = document.getElementById("consentAcceptBtn");
 const consentCloseBtn = document.getElementById("consentCloseBtn");
 const consentHeaderCloseBtn = document.getElementById("consentHeaderCloseBtn");
 const statusText = document.getElementById("status");
+const lumaHud = document.getElementById("lumaHud");
 const resultVideo = document.getElementById("result");
 const downloadLink = document.getElementById("download");
 
@@ -41,6 +42,7 @@ const LOW_LIGHT_RESUME_BRIGHT_SAMPLES = 15;
 const LUMA_PROBE_SIZE = 32;
 
 let smoothedLuma = 0.5;
+let lastRawLuma = null;
 let darkOutputPaused = false;
 let brightStreak = 0;
 let toneGain = 1;
@@ -156,10 +158,50 @@ function getLowLightMode() {
 
 function resetLowLightState() {
   smoothedLuma = 0.5;
+  lastRawLuma = null;
   darkOutputPaused = false;
   brightStreak = 0;
   toneGain = 1;
   toneBlackPoint = 0;
+  updateLumaHud();
+}
+
+function updateLumaHud() {
+  if (!lumaHud) return;
+
+  if (!isRecording || lastRawLuma === null) {
+    lumaHud.hidden = true;
+    lumaHud.textContent = "";
+    return;
+  }
+
+  lumaHud.hidden = false;
+  const rawPct = (lastRawLuma * 100).toFixed(1);
+  const mode = getLowLightMode();
+
+  if (mode === "none") {
+    lumaHud.textContent = `平均輝度 ${rawPct}%`;
+    return;
+  }
+
+  const smoothPct = (smoothedLuma * 100).toFixed(1);
+  const pausedLabel =
+    mode === "pause" && darkOutputPaused ? " · 出力停止中" : "";
+  lumaHud.textContent = `平均 ${rawPct}% · 平滑 ${smoothPct}%${pausedLabel}`;
+}
+
+function probeVideoLuma() {
+  const raw = measureVideoLumaGpu();
+  if (raw === null) return null;
+
+  lastRawLuma = raw;
+
+  if (getLowLightMode() !== "none") {
+    smoothedLuma = smoothedLuma * (1 - LOW_LIGHT_LUMA_EMA) + raw * LOW_LIGHT_LUMA_EMA;
+  }
+
+  updateLumaHud();
+  return raw;
 }
 
 function createByteTexture(gl, textureWidth, textureHeight) {
@@ -223,14 +265,6 @@ function measureVideoLumaGpu() {
   }
 
   return sum / pixelCount / 255;
-}
-
-function updateSmoothedLuma() {
-  const raw = measureVideoLumaGpu();
-  if (raw === null) return null;
-
-  smoothedLuma = smoothedLuma * (1 - LOW_LIGHT_LUMA_EMA) + raw * LOW_LIGHT_LUMA_EMA;
-  return smoothedLuma;
 }
 
 function updateDarkPauseState(luma) {
@@ -777,13 +811,11 @@ function accumulateFrameGpu() {
   try {
     updateVideoTexture();
 
-    if (getLowLightMode() !== "none") {
-      const luma = updateSmoothedLuma();
-      if (luma !== null) {
-        updateDarkPauseState(luma);
-        if (getLowLightMode() === "pause" && darkOutputPaused) {
-          return;
-        }
+    const luma = probeVideoLuma();
+    if (luma !== null && getLowLightMode() !== "none") {
+      updateDarkPauseState(smoothedLuma);
+      if (getLowLightMode() === "pause" && darkOutputPaused) {
+        return;
       }
     }
 
@@ -843,6 +875,7 @@ function emitAverageFrame() {
 
   if (mode === "pause" && darkOutputPaused) {
     clearAccumulation();
+    updateLumaHud();
     statusText.textContent =
       `Output paused (too dark, brightness ${(luma * 100).toFixed(0)}%)...`;
     return;
